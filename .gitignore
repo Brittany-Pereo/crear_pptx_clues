@@ -1,0 +1,22 @@
+
+
+# Archivos de R y paquetes
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Dependencias y archivos de paquetes
+renv/library/
+inst/doc
+renv/staging/
+renv/.cache
+.Rprofile
+
+# Archivos específicos de despliegue
+rsconnect/
+.Rbuildignore
+
+# Archivos propios de golem
+dev/
+inst/app/www/

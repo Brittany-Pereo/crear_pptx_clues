@@ -1,0 +1,37 @@
+Package: pptx
+Title: PKG_TITLE
+Version: 0.0.0.9000
+Authors@R: 
+    person("Armando", "González Díaz", email="armando.gonzalez@imssbienestar.gob.mx", role = c("aut", "cre"))
+Description: PKG_DESC.
+License: MIT + file LICENSE
+Imports: 
+    config,
+    DBI,
+    duckdb,
+    dplyr,
+    ggplot2,
+    golem,
+    shiny,
+    shinydashboard,
+    DT,
+    glue,
+    pkgload, 
+    stats, 
+    arrow, 
+    openxlsx, 
+    lubridate
+Encoding: UTF-8
+LazyData: true
+Suggests: 
+    knitr,
+    rmarkdown,
+    spelling,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Language: es-MX
+Depends: 
+    R (>= 3.5)
+VignetteBuilder: knitr
+Config/roxygen2/version: 8.0.0
+RoxygenNote: 7.3.3
