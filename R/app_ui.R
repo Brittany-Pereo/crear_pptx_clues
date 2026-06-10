@@ -75,7 +75,7 @@ app_ui <- function(request) {
                 status = "primary",
                 solidHeader = TRUE,
                 width = 12,
-                uiOutput("modulo_consulta")
+                uiOutput("modulo_consulta") #Aqui se inserta una interfas construida desde el servidos
               )
             )
           ),

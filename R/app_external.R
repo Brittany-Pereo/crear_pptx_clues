@@ -14,10 +14,18 @@
 golem_add_external_resources <- function() {
 
   # 1. Agregar ruta de recursos estáticos
-  addResourcePath(
-    "www",
-    app_sys("app/www")
-  )
+  www_path <- app_sys("app/www")
+
+  if (www_path == "" || !dir.exists(www_path)) {
+    www_path <- file.path(getwd(), "inst", "app", "www")
+  }
+
+  if (dir.exists(www_path)) {
+    addResourcePath(
+      "www",
+      www_path
+    )
+  }
 
   # 2. Activar JavaScript de golem
   golem::activate_js()

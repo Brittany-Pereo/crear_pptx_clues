@@ -1,9 +1,15 @@
 # Launch the ShinyApp (Do not remove this comment)
 # To deploy, run: rsconnect::deployApp()
 # Or use the blue button on top of this file
+#mE localiza en la carpeta
+setwd("C:/Users/brittany.pereo/GitHub/crear_pptx_clues")
 
-pkgload::load_all(export_all = FALSE,helpers = FALSE,attach_testthat = FALSE)
+#Corre las funciones
+pkgload::load_all(export_all = FALSE,
+                  helpers = FALSE,attach_testthat = FALSE)
 options( "golem.app.prod" = TRUE)
+
+#Aqui arranca la funsión
 pptx::run_app() # add parameters here (if any)
 
 
