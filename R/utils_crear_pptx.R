@@ -1415,10 +1415,10 @@ if (hay_indicador_2026(datos_ultimos_3_anios, "qx")) {
   return(pptx)
 }
 # # # Aplicacion --------------------------------------------------------------
-library(tidyverse)
-require(grid)
-require(gridExtra)
-require(gridtext)
+# library(tidyverse)
+# require(grid)
+# require(gridExtra)
+# require(gridtext)
 
 # # clues_info <- arrow::read_parquet(
 # #   "C:/Users/brittany.pereo/OneDrive - IMSS-BIENESTAR/División de Procesamiento de información - Repositorio de Datos/CLUES/clues.parquet"
