@@ -304,12 +304,12 @@ mod_clues_query_server <- function(id, con, clues_info) {
         )
     })
 
-    metas_filtrado_grafica <- reactive({
-      req(input$clues_select)
+metas_filtrado_grafica <- reactive({
+  req(input$clues_select)
 
-      metas %>%
-        dplyr::filter(clues_imb == input$clues_select)
-    })
+  metas %>%
+    dplyr::filter(clues_imb == input$clues_select)
+})
 
 crear_grafica_clues <- function(df, variable_sel, titulo, datos_anual_grafica, metas_filtrado) {
 
@@ -353,7 +353,7 @@ crear_grafica_clues <- function(df, variable_sel, titulo, datos_anual_grafica, m
             dplyr::case_when(
               variable_sel == "consulta_general" ~ sum(metas_filtrado$meta_general_anual, na.rm = TRUE),
               variable_sel == "consulta_especialidad" ~ sum(metas_filtrado$meta_especialidad_anual, na.rm = TRUE),
-              variable_sel == "procedimientos_qx" ~ sum(metas_filtrado$meta_qx_anual, na.rm = TRUE),
+              variable_sel == "procedimientos_qx" ~ sum(metas_filtrado$meta_cirugia_anual, na.rm = TRUE),
               variable_sel == "egresos" ~ sum(metas_filtrado$meta_egresos_anual, na.rm = TRUE),
               TRUE ~ total_anual
             ),
