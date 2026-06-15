@@ -567,10 +567,10 @@ ft_planeacion <- function(df,
   ft
 }
 # Grafica temporal --------------------------------------------------------
-fecha_fin_graf <- lubridate::floor_date(fecha_corte, "month")
+# Grafica temporal --------------------------------------------------------
 grafica_consultas_periodos <- function(df,
                                        fecha_inicio = "2022-08-01",
-                                       fecha_fin    = fecha_fin_graf,
+                                       fecha_fin    = NULL,
                                        titulo = "Consultas totales del IMSS Bienestar",
                                        color_linea = "#6B6B6B",
                                        verde_punto = "#1F5B50",
@@ -580,13 +580,15 @@ grafica_consultas_periodos <- function(df,
                                        fill_2026 = "#E9DDCC",
                                        fill_valuebox = "#B99C6D") {
 
+  if (is.null(fecha_fin)) {
+    fecha_fin <- lubridate::floor_date(Sys.Date(), "month")
+  }
+
   df <- df %>%
     dplyr::mutate(fecha = as.Date(fecha)) %>%
     dplyr::filter(
       fecha >= as.Date(fecha_inicio),
       fecha <= as.Date(fecha_fin)
-      # ,
-      # fecha < lubridate::floor_date(Sys.Date(), "month")
     ) %>%
     dplyr::arrange(fecha)
 
