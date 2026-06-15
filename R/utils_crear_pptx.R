@@ -1427,29 +1427,29 @@ require(gridtext)
 # # metas <- readxl::read_xlsx(
 # #   "C:/Users/brittany.pereo/OneDrive - IMSS-BIENESTAR/División de Procesamiento de información - Repositorio de Datos/Productividad/Metas/2026/Metas de productividad por unidad medica 2026.xlsx"
 # # )
+# #
+# load("C:/Users/brittany.pereo/Downloads/sysdata.rda")
 #
-load("C:/Users/brittany.pereo/Downloads/sysdata.rda")
-
-ruta <- "C:/Users/brittany.pereo/Downloads/datos_clues_BCIMB000524_2026-06-15.xlsx"
-datos_consulta <-       list(
-  datos = ruta |> readxl::read_excel(sheet= "productividad detalle"),
-  resumen = ruta|> readxl::read_excel(skip =7, sheet=1),
-  clues_seleccionada = "BCIMB000524"
-)
-
-presentacion <- crear_reporte_productividad(
-  codigo_clues = datos_consulta$clues_seleccionada,
-  clues_info = clues_info,
-  metas = metas,
-  historicos = datos_consulta$datos,
-  procedimientos_personas = datos_consulta$resumen,
-  ruta_master = "C:/Users/brittany.pereo/IMSS-BIENESTAR/División de Procesamiento de información - Proyectos/84_presentacion_clues/data raw/Master presentación.pptx"
-  # output = "C:/Users/armando.gonzalez/Downloads/reporte_BCIMB000051.pptx"
-)
-
-
-print(presentacion,
-      target = "C:/Users/brittany.pereo/Downloads/BCIMB000046.pptx")
+# ruta <- "C:/Users/brittany.pereo/Downloads/datos_clues_BCIMB000524_2026-06-15.xlsx"
+# datos_consulta <-       list(
+#   datos = ruta |> readxl::read_excel(sheet= "productividad detalle"),
+#   resumen = ruta|> readxl::read_excel(skip =7, sheet=1),
+#   clues_seleccionada = "BCIMB000524"
+# )
+#
+# presentacion <- crear_reporte_productividad(
+#   codigo_clues = datos_consulta$clues_seleccionada,
+#   clues_info = clues_info,
+#   metas = metas,
+#   historicos = datos_consulta$datos,
+#   procedimientos_personas = datos_consulta$resumen,
+#   ruta_master = "C:/Users/brittany.pereo/IMSS-BIENESTAR/División de Procesamiento de información - Proyectos/84_presentacion_clues/data raw/Master presentación.pptx"
+#   # output = "C:/Users/armando.gonzalez/Downloads/reporte_BCIMB000051.pptx"
+# )
+#
+#
+# print(presentacion,
+#       target = "C:/Users/brittany.pereo/Downloads/BCIMB000524.pptx")
 
 #
 # codigo_clues = datos_consulta$clues_seleccionada
