@@ -210,6 +210,11 @@ mod_clues_query_server <- function(id, con, clues_info) {
 
           if (nrow(resultados) > 0) {
             val_personas$datos <- resultados
+
+            print(val_personas$datos)
+            str(val_personas$datos)
+            View(as.data.frame(val_personas$datos))
+
             cat("✅ Consulta exitosa. Registros obtenidos:",
                 nrow(resultados), "\n")
             cat("📊 Columnas:", paste(names(resultados), collapse = ", "), "\n")
@@ -498,47 +503,106 @@ mod_clues_query_server <- function(id, con, clues_info) {
         )
     }
 
+    datos_anual_grafica_personas <- reactive({
+      req(datos_personas_grafica())
+      req(datos_anual_grafica())
+
+      anual_personas <- datos_personas_grafica() %>%
+        mutate(anio = lubridate::year(fecha)) %>%
+        group_by(anio) %>%
+        summarise(
+          consulta_general_anual = sum(consulta_general, na.rm = TRUE),
+          consulta_especialidad_anual = sum(consulta_especialidad, na.rm = TRUE),
+          procedimientos_qx_anual = sum(procedimientos_qx, na.rm = TRUE),
+          egresos_anual = sum(egresos, na.rm = TRUE),
+          .groups = "drop"
+        )
+
+      historico_2024_2025 <- datos_anual_grafica() %>%
+        filter(anio %in% c(2024, 2025))
+
+      anual_personas %>%
+        filter(anio == 2026) %>%
+        bind_rows(historico_2024_2025) %>%
+        arrange(anio)
+    })
+
+    datos_personas_grafica <- reactive({
+      req(val_personas$datos)
+
+      val_personas$datos %>%
+        mutate(
+          anio = as.numeric(fecha),
+          fecha = as.Date(paste0(anio, "-12-31")),
+          tipo_procedimiento = case_when(
+            tipo_procedimiento == "general" ~ "consulta_general",
+            tipo_procedimiento == "especialidad" ~ "consulta_especialidad",
+            tipo_procedimiento == "qx" ~ "procedimientos_qx",
+            tipo_procedimiento == "egresos" ~ "egresos",
+            TRUE ~ tipo_procedimiento
+          )
+        ) %>%
+        filter(tipo_procedimiento %in% c(
+          "consulta_general",
+          "consulta_especialidad",
+          "procedimientos_qx",
+          "egresos"
+        )) %>%
+        select(fecha, tipo_procedimiento, procedimientos) %>%
+        tidyr::pivot_wider(
+          names_from = tipo_procedimiento,
+          values_from = procedimientos,
+          values_fill = 0
+        )
+    })
+
     output$grafica_general <- renderPlot({
-      req(valores$datos, datos_anual_grafica(), metas_filtrado_grafica())
+      req(datos_personas_grafica(), datos_anual_grafica_personas(), metas_filtrado_grafica())
+
       crear_grafica_clues(
-        valores$datos,
+        datos_personas_grafica(),
         "consulta_general",
         "Consulta general",
-        datos_anual_grafica(),
+        datos_anual_grafica_personas(),
         metas_filtrado_grafica()
       )
     })
 
     output$grafica_especialidad <- renderPlot({
-      req(valores$datos, datos_anual_grafica())
+      req(datos_personas_grafica(), datos_anual_grafica_personas(), metas_filtrado_grafica())
+
       crear_grafica_clues(
-        valores$datos,
+        datos_personas_grafica(),
         "consulta_especialidad",
         "Consulta de especialidad",
-        datos_anual_grafica(),
-        metas_filtrado_grafica())
+        datos_anual_grafica_personas(),
+        metas_filtrado_grafica()
+      )
     })
 
     output$grafica_qx <- renderPlot({
-      req(valores$datos, datos_anual_grafica())
+      req(datos_personas_grafica(), datos_anual_grafica_personas(), metas_filtrado_grafica())
+
       crear_grafica_clues(
-        valores$datos,
+        datos_personas_grafica(),
         "procedimientos_qx",
         "Procedimientos quirúrgicos",
-        datos_anual_grafica(),
-        metas_filtrado_grafica())
+        datos_anual_grafica_personas(),
+        metas_filtrado_grafica()
+      )
     })
 
     output$grafica_egresos <- renderPlot({
-      req(valores$datos, datos_anual_grafica())
+      req(datos_personas_grafica(), datos_anual_grafica_personas(), metas_filtrado_grafica())
+
       crear_grafica_clues(
-        valores$datos,
+        datos_personas_grafica(),
         "egresos",
         "Egresos",
-        datos_anual_grafica(),
-        metas_filtrado_grafica())
+        datos_anual_grafica_personas(),
+        metas_filtrado_grafica()
+      )
     })
-
     # Descargar datos
     output$descargar_datos <- downloadHandler(
       filename = function() {
