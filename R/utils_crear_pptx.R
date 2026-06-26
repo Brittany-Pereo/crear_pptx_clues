@@ -385,14 +385,27 @@ definir_layout_historico <- function(datos_consulta_funcion) {
   return(NA_character_)
 }
 
+obtener_col <- function(df, nombre, default = 0) {
+  if (nombre %in% names(df)) {
+    df[[nombre]]
+  } else {
+    rep(default, nrow(df))
+  }
+}
+
 grafica_planeacion_historica <- function(df, col_total, col_avance, titulo,
                                          beige = "#D9D2BE",
                                          verde = "#2F6F63") {
 
   df %>%
-    dplyr::filter(anio %in% 2020:2025) %>%
     dplyr::mutate(
-      anio = factor(anio, levels = 2020:2025),
+      anio_num = as.integer(anio)
+    ) %>%
+    dplyr::filter(
+      anio_num %in% 2020:2025
+    ) %>%
+    dplyr::mutate(
+      anio = factor(anio_num, levels = 2020:2025),
       etiqueta_avance = scales::comma(.data[[col_avance]]),
       etiqueta_total = scales::comma(.data[[col_total]])
     ) %>%
@@ -411,7 +424,10 @@ grafica_planeacion_historica <- function(df, col_total, col_avance, titulo,
     ) +
 
     ggplot2::geom_text(
-      ggplot2::aes(y = .data[[col_total]], label = etiqueta_total),
+      ggplot2::aes(
+        y = .data[[col_total]],
+        label = etiqueta_total
+      ),
       vjust = -0.35,
       fontface = "bold",
       size = 3.8,
@@ -419,7 +435,10 @@ grafica_planeacion_historica <- function(df, col_total, col_avance, titulo,
     ) +
 
     ggplot2::geom_text(
-      ggplot2::aes(y = .data[[col_avance]], label = etiqueta_avance),
+      ggplot2::aes(
+        y = .data[[col_avance]],
+        label = etiqueta_avance
+      ),
       vjust = 1.25,
       color = "white",
       fontface = "bold",
@@ -428,28 +447,161 @@ grafica_planeacion_historica <- function(df, col_total, col_avance, titulo,
     ) +
 
     ggplot2::scale_x_discrete(drop = FALSE) +
+
     ggplot2::scale_y_continuous(
       labels = scales::comma,
       expand = ggplot2::expansion(mult = c(0, .16))
     ) +
-    ggplot2::labs(title = titulo, x = NULL, y = NULL) +
+
+    ggplot2::labs(
+      title = titulo,
+      x = NULL,
+      y = NULL
+    ) +
+
     ggplot2::theme_minimal(base_size = 12) +
     ggplot2::theme(
       legend.position = "none",
       panel.grid = ggplot2::element_blank(),
       axis.title = ggplot2::element_blank(),
-      axis.text.x = ggplot2::element_text(face = "bold", color = "#6B7280"),
-      axis.text.y = ggplot2::element_text(color = "#6B7280"),
+      axis.text.x = ggplot2::element_text(
+        face = "bold",
+        color = "#6B7280"
+      ),
+      axis.text.y = ggplot2::element_text(
+        color = "#6B7280"
+      ),
       plot.title = ggplot2::element_text(
         hjust = 0.5,
         face = "bold",
         color = "#6B7280",
         size = 18
       ),
-      plot.background = ggplot2::element_rect(fill = "white", color = NA),
-      panel.background = ggplot2::element_rect(fill = "white", color = NA)
+      plot.background = ggplot2::element_rect(
+        fill = "white",
+        color = NA
+      ),
+      panel.background = ggplot2::element_rect(
+        fill = "white",
+        color = NA
+      )
     )
 }
+
+grafica_planeacion_2024_2026 <- function(df, col_total, col_avance, titulo,
+                                         beige = "#D9D2BE",
+                                         verde = "#2F6F63",
+                                         beige_2026 = "#A99F86",
+                                         verde_2026 = "#1E5B4F") {
+
+  df %>%
+    dplyr::mutate(anio_num = as.integer(anio)) %>%
+    dplyr::filter(anio_num %in% 2024:2026) %>%
+    dplyr::mutate(
+      anio = factor(anio_num, levels = 2024:2026),
+      pct_avance = dplyr::if_else(
+        .data[[col_total]] > 0,
+        .data[[col_avance]] / .data[[col_total]],
+        NA_real_
+      ),
+      etiqueta_avance = dplyr::if_else(
+        anio_num == 2026,
+        paste0(
+          "Avance\n",
+          scales::comma(.data[[col_avance]]),
+          "\n(",
+          scales::percent(pct_avance, accuracy = 1),
+          ")"
+        ),
+        scales::comma(.data[[col_avance]])
+      ),
+      etiqueta_total = dplyr::if_else(
+        anio_num == 2026,
+        paste0("Meta 2026\n", scales::comma(.data[[col_total]])),
+        scales::comma(.data[[col_total]])
+      ),
+      color_total = dplyr::if_else(anio_num == 2026, beige_2026, beige),
+      color_avance = dplyr::if_else(anio_num == 2026, verde_2026, verde)
+    ) %>%
+    ggplot2::ggplot(ggplot2::aes(x = anio)) +
+
+    ggplot2::geom_col(
+      ggplot2::aes(y = .data[[col_total]], fill = color_total),
+      width = 0.82
+    ) +
+
+    ggplot2::geom_col(
+      ggplot2::aes(y = .data[[col_avance]], fill = color_avance),
+      width = 0.82
+    ) +
+
+    ggplot2::geom_text(
+      ggplot2::aes(
+        y = .data[[col_total]],
+        label = etiqueta_total
+      ),
+      vjust = -0.35,
+      fontface = "bold",
+      size = 3.8,
+      lineheight = 0.9
+    ) +
+
+    ggplot2::geom_text(
+      ggplot2::aes(
+        y = .data[[col_avance]],
+        label = etiqueta_avance
+      ),
+      vjust = 1.25,
+      color = "white",
+      fontface = "bold",
+      size = 3.1,
+      lineheight = 0.9
+    ) +
+
+    ggplot2::scale_fill_identity() +
+
+    ggplot2::scale_x_discrete(drop = FALSE) +
+
+    ggplot2::scale_y_continuous(
+      labels = scales::comma,
+      expand = ggplot2::expansion(mult = c(0, .16))
+    ) +
+
+    ggplot2::labs(
+      title = titulo,
+      x = NULL,
+      y = NULL
+    ) +
+
+    ggplot2::theme_minimal(base_size = 12) +
+    ggplot2::theme(
+      legend.position = "none",
+      panel.grid = ggplot2::element_blank(),
+      axis.title = ggplot2::element_blank(),
+      axis.text.x = ggplot2::element_text(
+        face = "bold",
+        color = "#6B7280"
+      ),
+      axis.text.y = ggplot2::element_text(
+        color = "#6B7280"
+      ),
+      plot.title = ggplot2::element_text(
+        hjust = 0.5,
+        face = "bold",
+        color = "#6B7280",
+        size = 18
+      ),
+      plot.background = ggplot2::element_rect(
+        fill = "white",
+        color = NA
+      ),
+      panel.background = ggplot2::element_rect(
+        fill = "white",
+        color = NA
+      )
+    )
+}
+
 
 armar_tabla_dinamica <- function(df, indicadores, etiquetas, mes_nombre) {
   tibble::tibble(
@@ -771,7 +923,7 @@ crear_reporte_productividad <- function(
     historicos,
     procedimientos_personas,
     #output,
-    ruta_master = "data/Master_presentacion.pptx"
+    ruta_master = "inst/app/data/master_presentacion.pptx"
 ) {
 
   # Variables de corte -----------------------------------------------------
@@ -1034,6 +1186,14 @@ crear_reporte_productividad <- function(
   )
 
   datos_historicos_2020_2025 <- historicos %>%
+    dplyr::mutate(
+      consulta_general_tmp = obtener_col(., "consulta_general") +
+        obtener_col(., "consulta_gral"),
+      consulta_esp_tmp = obtener_col(., "consulta_especialidad") +
+        obtener_col(., "consulta_esp"),
+      procedimientos_qx_tmp = obtener_col(., "procedimientos_qx"),
+      egresos_tmp = obtener_col(., "egresos")
+    ) %>%
     dplyr::filter(
       lubridate::year(fecha) >= 2020,
       lubridate::year(fecha) <= 2025,
@@ -1045,233 +1205,336 @@ crear_reporte_productividad <- function(
     ) %>%
     dplyr::group_by(anio, numero_de_semana) %>%
     dplyr::summarise(
-      total_consultas = sum(consulta_total, na.rm = TRUE),
-      consulta_gral   = sum(consulta_general, na.rm = TRUE),
-      consulta_esp    = sum(consulta_especialidad, na.rm = TRUE),
-      qx              = sum(procedimientos_qx, na.rm = TRUE),
-      egresos         = sum(egresos, na.rm = TRUE),
+      consulta_gral = sum(consulta_general_tmp, na.rm = TRUE),
+      consulta_esp  = sum(consulta_esp_tmp, na.rm = TRUE),
+      qx            = sum(procedimientos_qx_tmp, na.rm = TRUE),
+      egresos       = sum(egresos_tmp, na.rm = TRUE),
       .groups = "drop"
+    ) %>%
+    dplyr::mutate(
+      total_consultas = dplyr::case_when(
+        consulta_gral > 0 & consulta_esp > 0 ~ consulta_gral + consulta_esp,
+        consulta_gral > 0 ~ consulta_gral,
+        consulta_esp > 0 ~ consulta_esp,
+        TRUE ~ 0
+      )
     ) %>%
     dplyr::left_join(
       datos_anual %>%
         dplyr::mutate(anio = as.character(anio)),
       by = "anio"
     ) %>%
+    dplyr::mutate(
+      consulta_gral_anual = tidyr::replace_na(consulta_gral_anual, 0),
+      consulta_esp_anual  = tidyr::replace_na(consulta_esp_anual, 0),
+      qx_anual            = tidyr::replace_na(qx_anual, 0),
+
+      total_consultas_anual = dplyr::case_when(
+        consulta_gral_anual > 0 & consulta_esp_anual > 0 ~
+          consulta_gral_anual + consulta_esp_anual,
+        consulta_gral_anual > 0 ~ consulta_gral_anual,
+        consulta_esp_anual > 0 ~ consulta_esp_anual,
+        TRUE ~ 0
+      )
+    ) %>%
     dplyr::arrange(anio)
 
-  layout_historico_2020 <- if (
-    any(datos_historicos_2020_2025$total_consultas > 0, na.rm = TRUE) &&
-    any(
-      datos_historicos_2020_2025$qx > 0 |
+  print("REVISION DATOS HISTORICOS")
+  print(datos_historicos_2020_2025)
+
+  hay_consultas_2020 <- any(
+    datos_historicos_2020_2025$total_consultas > 0,
+    na.rm = TRUE
+  )
+
+  hay_qx_2020 <- any(
+    datos_historicos_2020_2025$qx > 0 |
       datos_historicos_2020_2025$egresos > 0,
-      na.rm = TRUE
+    na.rm = TRUE
+  )
+
+  if (hay_consultas_2020) {
+
+    grafica_consultas_2020_2025 <- grafica_planeacion_historica(
+      df = datos_historicos_2020_2025,
+      col_total = "total_consultas_anual",
+      col_avance = "total_consultas",
+      titulo = "Consultas totales"
     )
-  ) {
-    "Historico consultas y procedimientos"
-  } else if (
-    any(datos_historicos_2020_2025$total_consultas > 0, na.rm = TRUE)
-  ) {
-    "Historico consultas"
-  } else {
-    NA_character_
-  }
 
-  grafica_consultas_2020_2025 <- grafica_planeacion_historica(
-    df = datos_historicos_2020_2025,
-    col_total = "total_consultas_anual",
-    col_avance = "total_consultas",
-    titulo = "Consultas totales"
-  )
+    if (hay_qx_2020) {
 
-  grafica_qx_2020_2025 <- grafica_planeacion_historica(
-    df = datos_historicos_2020_2025,
-    col_total = "qx_anual",
-    col_avance = "qx",
-    titulo = "Procedimientos quirúrgicos"
-  )
-
-  if (!is.na(layout_historico_2020) &&
-      layout_historico_2020 == "Historico consultas y procedimientos") {
-
-    pptx <- pptx %>%
-      officer::add_slide(
-        layout = "1_Historico consultas y procedimientos",
-        master = "Tema de Office"
-      ) %>%
-      officer::ph_with(
-        "Productividad IMSS Bienestar",
-        officer::ph_location_label("Título 1")
-      ) %>%
-      officer::ph_with(
-        value = rvg::dml(ggobj = grafica_consultas_2020_2025),
-        location = officer::ph_location_label("Grafica 1")
-      ) %>%
-      officer::ph_with(
-        value = rvg::dml(ggobj = grafica_qx_2020_2025),
-        location = officer::ph_location_label("Grafica 2")
-      ) %>%
-      officer::ph_with(
-        value = paste0("Del 01 de enero al ", fecha_portada),
-        location = officer::ph_location_label("fecha"),
-        use_loc_size = TRUE
+      grafica_qx_2020_2025 <- grafica_planeacion_historica(
+        df = datos_historicos_2020_2025,
+        col_total = "qx_anual",
+        col_avance = "qx",
+        titulo = "Procedimientos quirúrgicos"
       )
+
+      pptx <- pptx %>%
+        officer::add_slide(
+          layout = "1_Historico consultas y procedimientos",
+          master = "Tema de Office"
+        ) %>%
+        officer::ph_with(
+          "Productividad IMSS Bienestar",
+          officer::ph_location_label("Título 1")
+        ) %>%
+        officer::ph_with(
+          value = rvg::dml(ggobj = grafica_consultas_2020_2025),
+          location = officer::ph_location_label("Grafica 1")
+        ) %>%
+        officer::ph_with(
+          value = rvg::dml(ggobj = grafica_qx_2020_2025),
+          location = officer::ph_location_label("Grafica 2")
+        ) %>%
+        officer::ph_with(
+          value = paste0("Del 01 de enero al ", fecha_portada),
+          location = officer::ph_location_label("fecha"),
+          use_loc_size = TRUE
+        )
+
+    } else {
+
+      pptx <- pptx %>%
+        officer::add_slide(
+          layout = "1_Historico consultas",
+          master = "Tema de Office"
+        ) %>%
+        officer::ph_with(
+          "Productividad IMSS Bienestar",
+          officer::ph_location_label("Título 1")
+        ) %>%
+        officer::ph_with(
+          value = rvg::dml(ggobj = grafica_consultas_2020_2025),
+          location = officer::ph_location_label("Grafica 1")
+        ) %>%
+        officer::ph_with(
+          value = paste0("Del 01 de enero al ", fecha_portada),
+          location = officer::ph_location_label("fecha"),
+          use_loc_size = TRUE
+        )
+    }
   }
-# Diapo 4 -----------------------------------------------------------------
+  # Diapo 4 -----------------------------------------------------------------
+  for (col in c("consulta_gral", "consulta_esp", "qx", "egresos")) {
+    if (!col %in% names(datos_consulta_funcion)) {
+      datos_consulta_funcion[[col]] <- 0
+    }
+  }
+
   datos_2024_2026 <- datos_consulta_funcion %>%
-    dplyr::filter(anio %in% c(2024, 2025, 2026))
+    dplyr::mutate(
+      anio_num = as.integer(anio),
 
-  layout_historico_2024_2026 <- definir_layout_historico(datos_2024_2026)
+      consulta_gral = tidyr::replace_na(consulta_gral, 0),
+      consulta_esp  = tidyr::replace_na(consulta_esp, 0),
+      qx            = tidyr::replace_na(qx, 0),
+      egresos       = tidyr::replace_na(egresos, 0),
 
-  grafica_consultas_2024_2026 <- grafica_planeacion_2024_2026(
-    df = datos_2024_2026,
-    col_total = "total_consultas_meta",
-    col_avance = "total_consultas",
-    titulo = "Consultas totales"
-  )
+      consulta_gral_anual = tidyr::replace_na(consulta_gral_anual, 0),
+      consulta_esp_anual  = tidyr::replace_na(consulta_esp_anual, 0),
+      qx_anual            = tidyr::replace_na(qx_anual, 0),
 
-  indicadores_consulta <- c()
-  etiquetas_consulta <- c()
+      total_consultas = dplyr::case_when(
+        consulta_gral > 0 & consulta_esp > 0 ~ consulta_gral + consulta_esp,
+        consulta_gral > 0 ~ consulta_gral,
+        consulta_esp > 0 ~ consulta_esp,
+        TRUE ~ 0
+      ),
 
-  if (hay_indicador_2026(datos_2024_2026, "consulta_gral")) {
-    indicadores_consulta <- c(indicadores_consulta, "consulta_gral")
-    etiquetas_consulta <- c(etiquetas_consulta, "Consultas generales")
-  }
+      total_consultas_meta = dplyr::case_when(
+        anio_num == 2026 & !is.na(total_consultas_meta) ~ total_consultas_meta,
+        anio_num == 2026 ~ total_consultas,
+        consulta_gral_anual > 0 & consulta_esp_anual > 0 ~
+          consulta_gral_anual + consulta_esp_anual,
+        consulta_gral_anual > 0 ~ consulta_gral_anual,
+        consulta_esp_anual > 0 ~ consulta_esp_anual,
+        total_consultas_anual > 0 ~ total_consultas_anual,
+        TRUE ~ total_consultas
+      ),
 
-  if (hay_indicador_2026(datos_2024_2026, "consulta_esp")) {
-    indicadores_consulta <- c(indicadores_consulta, "consulta_esp")
-    etiquetas_consulta <- c(etiquetas_consulta, "Consultas de especialidad*")
-  }
-
-  tabla_consultas <- armar_tabla_dinamica(
-    df = datos_2024_2026,
-    indicadores = indicadores_consulta,
-    etiquetas = etiquetas_consulta,
-    mes_nombre = "Acumulado"
-  )
-
-  if (!is.na(layout_historico_2024_2026) &&
-      layout_historico_2024_2026 == "Historico consultas") {
-
-    ft_consultas <- ft_planeacion(
-      tabla_consultas,
-      w1 = 4.60,
-      w2 = 1.35,
-      w3 = 1.35,
-      w4 = 1.40,
-      size_header = 11,
-      size_body = 10,
-      h_fila = 0.38
-    )
-
-    pptx <- pptx %>%
-      officer::add_slide(
-        layout = "Historico consultas",
-        master = "Tema de Office"
-      ) %>%
-      officer::ph_with(
-        "Productividad IMSS Bienestar",
-        officer::ph_location_label("Título 1")
-      ) %>%
-      officer::ph_with(
-        value = rvg::dml(ggobj = grafica_consultas_2024_2026),
-        location = officer::ph_location_label("Grafica 1")
-      ) %>%
-      officer::ph_with(
-        value = ft_consultas,
-        location = officer::ph_location_label("tabla_1"),
-        use_loc_size = TRUE
-      ) %>%
-      officer::ph_with(
-        value = paste0("Del 01 de enero al ", fecha_portada),
-        location = officer::ph_location_label("fecha"),
-        use_loc_size = TRUE
+      qx_meta = dplyr::case_when(
+        anio_num == 2026 & !is.na(qx_meta) ~ qx_meta,
+        anio_num == 2026 ~ qx,
+        qx_anual > 0 ~ qx_anual,
+        TRUE ~ qx
       )
-  }
+    ) %>%
+    dplyr::filter(anio_num %in% c(2024, 2025, 2026))
 
-  if (!is.na(layout_historico_2024_2026) &&
-      layout_historico_2024_2026 == "Historico consultas y procedimientos") {
+  print("REVISION DATOS 2024_2026")
+  print(datos_2024_2026)
 
-    grafica_qx_2024_2026 <- grafica_planeacion_2024_2026(
+  hay_consultas_2024_2026 <- any(
+    datos_2024_2026$total_consultas > 0,
+    na.rm = TRUE
+  )
+
+  hay_qx_2024_2026 <- any(
+    datos_2024_2026$qx > 0 |
+      datos_2024_2026$egresos > 0,
+    na.rm = TRUE
+  )
+
+  if (hay_consultas_2024_2026) {
+    datos_2024_2026 %>%
+      dplyr::select(
+        anio,
+        total_consultas,
+        total_consultas_meta,
+        qx,
+        qx_meta
+      )
+
+    grafica_consultas_2024_2026 <- grafica_planeacion_2024_2026(
       df = datos_2024_2026,
-      col_total = "qx_meta",
-      col_avance = "qx",
-      titulo = "Procedimientos quirúrgicos"
+      col_total = "total_consultas_meta",
+      col_avance = "total_consultas",
+      titulo = "Consultas totales"
     )
 
-    indicadores_proc <- c()
-    etiquetas_proc <- c()
+    indicadores_consulta <- c()
+    etiquetas_consulta <- c()
 
-    if (hay_indicador_2026(datos_2024_2026, "qx")) {
-      indicadores_proc <- c(indicadores_proc, "qx")
-      etiquetas_proc <- c(etiquetas_proc, "Procedimientos quirúrgicos")
+    if (hay_indicador_2026(datos_2024_2026, "consulta_gral")) {
+      indicadores_consulta <- c(indicadores_consulta, "consulta_gral")
+      etiquetas_consulta <- c(etiquetas_consulta, "Consultas generales")
     }
 
-    if (hay_indicador_2026(datos_2024_2026, "egresos")) {
-      indicadores_proc <- c(indicadores_proc, "egresos")
-      etiquetas_proc <- c(etiquetas_proc, "Egresos")
+    if (hay_indicador_2026(datos_2024_2026, "consulta_esp")) {
+      indicadores_consulta <- c(indicadores_consulta, "consulta_esp")
+      etiquetas_consulta <- c(etiquetas_consulta, "Consultas de especialidad*")
     }
 
-    tabla_proc <- armar_tabla_dinamica(
+    tabla_consultas <- armar_tabla_dinamica(
       df = datos_2024_2026,
-      indicadores = indicadores_proc,
-      etiquetas = etiquetas_proc,
+      indicadores = indicadores_consulta,
+      etiquetas = etiquetas_consulta,
       mes_nombre = "Acumulado"
     )
 
-    ft_consultas <- ft_planeacion(
-      tabla_consultas,
-      w1 = 2.70,
-      w2 = 0.90,
-      w3 = 0.90,
-      w4 = 0.80,
-      size_header = 8,
-      size_body = 7.5,
-      h_fila = 0.28
-    )
+    if (hay_qx_2024_2026) {
 
-    ft_proc <- ft_planeacion(
-      tabla_proc,
-      w1 = 2.70,
-      w2 = 0.90,
-      w3 = 0.90,
-      w4 = 0.80,
-      size_header = 8,
-      size_body = 7.5,
-      h_fila = 0.28
-    )
-
-    pptx <- pptx %>%
-      officer::add_slide(
-        layout = "Historico consultas y procedimientos",
-        master = "Tema de Office"
-      ) %>%
-      officer::ph_with(
-        "Productividad IMSS Bienestar",
-        officer::ph_location_label("Título 1")
-      ) %>%
-      officer::ph_with(
-        value = rvg::dml(ggobj = grafica_consultas_2024_2026),
-        location = officer::ph_location_label("Grafica 1")
-      ) %>%
-      officer::ph_with(
-        value = rvg::dml(ggobj = grafica_qx_2024_2026),
-        location = officer::ph_location_label("Grafica 2")
-      ) %>%
-      officer::ph_with(
-        value = ft_consultas,
-        location = officer::ph_location_label("tabla_1"),
-        use_loc_size = TRUE
-      ) %>%
-      officer::ph_with(
-        value = ft_proc,
-        location = officer::ph_location_label("tabla_2"),
-        use_loc_size = TRUE
-      ) %>%
-      officer::ph_with(
-        value = paste0("Del 01 de enero al ", fecha_portada),
-        location = officer::ph_location_label("fecha"),
-        use_loc_size = TRUE
+      grafica_qx_2024_2026 <- grafica_planeacion_2024_2026(
+        df = datos_2024_2026,
+        col_total = "qx_meta",
+        col_avance = "qx",
+        titulo = "Procedimientos quirúrgicos"
       )
+
+      indicadores_proc <- c()
+      etiquetas_proc <- c()
+
+      if (hay_indicador_2026(datos_2024_2026, "qx")) {
+        indicadores_proc <- c(indicadores_proc, "qx")
+        etiquetas_proc <- c(etiquetas_proc, "Procedimientos quirúrgicos")
+      }
+
+      if (hay_indicador_2026(datos_2024_2026, "egresos")) {
+        indicadores_proc <- c(indicadores_proc, "egresos")
+        etiquetas_proc <- c(etiquetas_proc, "Egresos")
+      }
+
+      tabla_proc <- armar_tabla_dinamica(
+        df = datos_2024_2026,
+        indicadores = indicadores_proc,
+        etiquetas = etiquetas_proc,
+        mes_nombre = "Acumulado"
+      )
+
+      ft_consultas <- ft_planeacion(
+        tabla_consultas,
+        w1 = 2.70,
+        w2 = 0.90,
+        w3 = 0.90,
+        w4 = 0.80,
+        size_header = 8,
+        size_body = 7.5,
+        h_fila = 0.28
+      )
+
+      ft_proc <- ft_planeacion(
+        tabla_proc,
+        w1 = 2.70,
+        w2 = 0.90,
+        w3 = 0.90,
+        w4 = 0.80,
+        size_header = 8,
+        size_body = 7.5,
+        h_fila = 0.28
+      )
+
+      pptx <- pptx %>%
+        officer::add_slide(
+          layout = "Historico consultas y procedimientos",
+          master = "Tema de Office"
+        ) %>%
+        officer::ph_with(
+          "Productividad IMSS Bienestar",
+          officer::ph_location_label("Título 1")
+        ) %>%
+        officer::ph_with(
+          value = rvg::dml(ggobj = grafica_consultas_2024_2026),
+          location = officer::ph_location_label("Grafica 1")
+        ) %>%
+        officer::ph_with(
+          value = rvg::dml(ggobj = grafica_qx_2024_2026),
+          location = officer::ph_location_label("Grafica 2")
+        ) %>%
+        officer::ph_with(
+          value = ft_consultas,
+          location = officer::ph_location_label("tabla_1"),
+          use_loc_size = TRUE
+        ) %>%
+        officer::ph_with(
+          value = ft_proc,
+          location = officer::ph_location_label("tabla_2"),
+          use_loc_size = TRUE
+        ) %>%
+        officer::ph_with(
+          value = paste0("Del 01 de enero al ", fecha_portada),
+          location = officer::ph_location_label("fecha"),
+          use_loc_size = TRUE
+        )
+
+    } else {
+
+      ft_consultas <- ft_planeacion(
+        tabla_consultas,
+        w1 = 4.60,
+        w2 = 1.35,
+        w3 = 1.35,
+        w4 = 1.40,
+        size_header = 11,
+        size_body = 10,
+        h_fila = 0.38
+      )
+
+      pptx <- pptx %>%
+        officer::add_slide(
+          layout = "Historico consultas",
+          master = "Tema de Office"
+        ) %>%
+        officer::ph_with(
+          "Productividad IMSS Bienestar",
+          officer::ph_location_label("Título 1")
+        ) %>%
+        officer::ph_with(
+          value = rvg::dml(ggobj = grafica_consultas_2024_2026),
+          location = officer::ph_location_label("Grafica 1")
+        ) %>%
+        officer::ph_with(
+          value = ft_consultas,
+          location = officer::ph_location_label("tabla_1"),
+          use_loc_size = TRUE
+        ) %>%
+        officer::ph_with(
+          value = paste0("Del 01 de enero al ", fecha_portada),
+          location = officer::ph_location_label("fecha"),
+          use_loc_size = TRUE
+        )
+    }
   }
   # Diapo 5 ----------------------------------------------------------------
   serie_mensual_consultas <- historicos %>%
