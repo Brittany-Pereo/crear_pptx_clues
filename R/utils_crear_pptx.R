@@ -385,56 +385,33 @@ definir_layout_historico <- function(datos_consulta_funcion) {
   return(NA_character_)
 }
 
-grafica_planeacion <- function(df, col_total, col_avance, titulo,
-                               beige = "#D9D2BE",
-                               verde = "#2F6F63",
-                               beige_2026 = "#A99F86",
-                               verde_2026 = "#1E5B4F") {
+grafica_planeacion_historica <- function(df, col_total, col_avance, titulo,
+                                         beige = "#D9D2BE",
+                                         verde = "#2F6F63") {
 
   df %>%
+    dplyr::filter(anio %in% 2020:2025) %>%
     dplyr::mutate(
-      anio_num = as.integer(anio),
-      anio = factor(anio, levels = 2020:2026),
-      pct_avance = dplyr::if_else(
-        .data[[col_total]] > 0,
-        .data[[col_avance]] / .data[[col_total]],
-        NA_real_
-      ),
-      etiqueta_avance = dplyr::if_else(
-        anio_num == 2026,
-        paste0("Avance\n",
-               scales::comma(.data[[col_avance]]),
-               "\n(",
-               scales::percent(pct_avance, accuracy = 1),
-               ")"
-        ),
-        scales::comma(.data[[col_avance]])
-      ),
-      etiqueta_total = dplyr::if_else(
-        anio_num == 2026,
-        paste0("Meta 2026\n", scales::comma(.data[[col_total]])),
-        scales::comma(.data[[col_total]])
-      ),
-      color_total = dplyr::if_else(anio_num == 2026, beige_2026, beige),
-      color_avance = dplyr::if_else(anio_num == 2026, verde_2026, verde)
+      anio = factor(anio, levels = 2020:2025),
+      etiqueta_avance = scales::comma(.data[[col_avance]]),
+      etiqueta_total = scales::comma(.data[[col_total]])
     ) %>%
     ggplot2::ggplot(ggplot2::aes(x = anio)) +
 
     ggplot2::geom_col(
-      ggplot2::aes(y = .data[[col_total]], fill = color_total),
+      ggplot2::aes(y = .data[[col_total]]),
+      fill = beige,
       width = 0.82
     ) +
 
     ggplot2::geom_col(
-      ggplot2::aes(y = .data[[col_avance]], fill = color_avance),
+      ggplot2::aes(y = .data[[col_avance]]),
+      fill = verde,
       width = 0.82
     ) +
 
     ggplot2::geom_text(
-      ggplot2::aes(
-        y = .data[[col_total]],
-        label = etiqueta_total
-      ),
+      ggplot2::aes(y = .data[[col_total]], label = etiqueta_total),
       vjust = -0.35,
       fontface = "bold",
       size = 3.8,
@@ -442,10 +419,7 @@ grafica_planeacion <- function(df, col_total, col_avance, titulo,
     ) +
 
     ggplot2::geom_text(
-      ggplot2::aes(
-        y = .data[[col_avance]],
-        label = etiqueta_avance
-      ),
+      ggplot2::aes(y = .data[[col_avance]], label = etiqueta_avance),
       vjust = 1.25,
       color = "white",
       fontface = "bold",
@@ -453,19 +427,12 @@ grafica_planeacion <- function(df, col_total, col_avance, titulo,
       lineheight = 0.9
     ) +
 
-    ggplot2::scale_fill_identity() +
-
     ggplot2::scale_x_discrete(drop = FALSE) +
-
     ggplot2::scale_y_continuous(
       labels = scales::comma,
       expand = ggplot2::expansion(mult = c(0, .16))
     ) +
-
-
-
     ggplot2::labs(title = titulo, x = NULL, y = NULL) +
-
     ggplot2::theme_minimal(base_size = 12) +
     ggplot2::theme(
       legend.position = "none",
@@ -1059,11 +1026,14 @@ crear_reporte_productividad <- function(
 
   # Diapo 3 ----------------------------------------------------------------
   fecha_corte_15 <- as.Date(
-    paste0(lubridate::year(fecha_corte), "-",
-           stringr::str_pad(lubridate::month(fecha_corte), 2, pad = "0"),
-           "-15"))
+    paste0(
+      lubridate::year(fecha_corte), "-",
+      stringr::str_pad(lubridate::month(fecha_corte), 2, pad = "0"),
+      "-15"
+    )
+  )
 
-datos_historicos_2020_2025 <- historicos %>%
+  datos_historicos_2020_2025 <- historicos %>%
     dplyr::filter(
       lubridate::year(fecha) >= 2020,
       lubridate::year(fecha) <= 2025,
@@ -1089,72 +1059,57 @@ datos_historicos_2020_2025 <- historicos %>%
     ) %>%
     dplyr::arrange(anio)
 
-  layout_historico_2020 <- definir_layout_historico(datos_historicos_2020_2025)
+  layout_historico_2020 <- if (
+    any(datos_historicos_2020_2025$total_consultas > 0, na.rm = TRUE) &&
+    any(
+      datos_historicos_2020_2025$qx > 0 |
+      datos_historicos_2020_2025$egresos > 0,
+      na.rm = TRUE
+    )
+  ) {
+    "Historico consultas y procedimientos"
+  } else if (
+    any(datos_historicos_2020_2025$total_consultas > 0, na.rm = TRUE)
+  ) {
+    "Historico consultas"
+  } else {
+    NA_character_
+  }
 
-  grafica_consultas_2020_2025 <- grafica_planeacion(
+  grafica_consultas_2020_2025 <- grafica_planeacion_historica(
     df = datos_historicos_2020_2025,
     col_total = "total_consultas_anual",
     col_avance = "total_consultas",
     titulo = "Consultas totales"
   )
 
-  if (!is.na(layout_historico_2020) &&
-      layout_historico_2020 == "Historico consultas") {
-
-    pptx <- pptx %>%
-      officer::add_slide(
-        layout = "1_Historico consultas",
-        master = "Tema de Office"
-      ) %>%
-
-      officer::ph_with(
-        "Productividad IMSS Bienestar",
-        officer::ph_location_label("Título 1")
-      ) %>%
-
-      officer::ph_with(
-        value = rvg::dml(ggobj = grafica_consultas_2020_2025),
-        location = officer::ph_location_label("Grafica 1")
-      ) %>%
-
-      officer::ph_with(
-        value = paste0("Del 01 de enero al ", fecha_portada),
-        location = officer::ph_location_label("fecha"),
-        use_loc_size = TRUE
-      )
-  }
+  grafica_qx_2020_2025 <- grafica_planeacion_historica(
+    df = datos_historicos_2020_2025,
+    col_total = "qx_anual",
+    col_avance = "qx",
+    titulo = "Procedimientos quirúrgicos"
+  )
 
   if (!is.na(layout_historico_2020) &&
       layout_historico_2020 == "Historico consultas y procedimientos") {
-
-    grafica_qx_2020_2025 <- grafica_planeacion(
-      df = datos_historicos_2020_2025,
-      col_total = "qx_anual",
-      col_avance = "qx",
-      titulo = "Procedimientos quirúrgicos"
-    )
 
     pptx <- pptx %>%
       officer::add_slide(
         layout = "1_Historico consultas y procedimientos",
         master = "Tema de Office"
       ) %>%
-
       officer::ph_with(
         "Productividad IMSS Bienestar",
         officer::ph_location_label("Título 1")
       ) %>%
-
       officer::ph_with(
         value = rvg::dml(ggobj = grafica_consultas_2020_2025),
         location = officer::ph_location_label("Grafica 1")
       ) %>%
-
       officer::ph_with(
         value = rvg::dml(ggobj = grafica_qx_2020_2025),
         location = officer::ph_location_label("Grafica 2")
       ) %>%
-
       officer::ph_with(
         value = paste0("Del 01 de enero al ", fecha_portada),
         location = officer::ph_location_label("fecha"),
@@ -1162,13 +1117,12 @@ datos_historicos_2020_2025 <- historicos %>%
       )
   }
 # Diapo 4 -----------------------------------------------------------------
-  # Diapo 4 ----------------------------------------------------------------
   datos_2024_2026 <- datos_consulta_funcion %>%
     dplyr::filter(anio %in% c(2024, 2025, 2026))
 
-  layout_historico <- definir_layout_historico(datos_2024_2026)
+  layout_historico_2024_2026 <- definir_layout_historico(datos_2024_2026)
 
-  grafica_consultas <- grafica_planeacion(
+  grafica_consultas_2024_2026 <- grafica_planeacion_2024_2026(
     df = datos_2024_2026,
     col_total = "total_consultas_meta",
     col_avance = "total_consultas",
@@ -1195,7 +1149,8 @@ datos_historicos_2020_2025 <- historicos %>%
     mes_nombre = "Acumulado"
   )
 
-  if (!is.na(layout_historico) && layout_historico == "Historico consultas") {
+  if (!is.na(layout_historico_2024_2026) &&
+      layout_historico_2024_2026 == "Historico consultas") {
 
     ft_consultas <- ft_planeacion(
       tabla_consultas,
@@ -1218,7 +1173,7 @@ datos_historicos_2020_2025 <- historicos %>%
         officer::ph_location_label("Título 1")
       ) %>%
       officer::ph_with(
-        value = rvg::dml(ggobj = grafica_consultas),
+        value = rvg::dml(ggobj = grafica_consultas_2024_2026),
         location = officer::ph_location_label("Grafica 1")
       ) %>%
       officer::ph_with(
@@ -1233,10 +1188,10 @@ datos_historicos_2020_2025 <- historicos %>%
       )
   }
 
-  if (!is.na(layout_historico) &&
-      layout_historico == "Historico consultas y procedimientos") {
+  if (!is.na(layout_historico_2024_2026) &&
+      layout_historico_2024_2026 == "Historico consultas y procedimientos") {
 
-    grafica_qx <- grafica_planeacion(
+    grafica_qx_2024_2026 <- grafica_planeacion_2024_2026(
       df = datos_2024_2026,
       col_total = "qx_meta",
       col_avance = "qx",
@@ -1295,11 +1250,11 @@ datos_historicos_2020_2025 <- historicos %>%
         officer::ph_location_label("Título 1")
       ) %>%
       officer::ph_with(
-        value = rvg::dml(ggobj = grafica_consultas),
+        value = rvg::dml(ggobj = grafica_consultas_2024_2026),
         location = officer::ph_location_label("Grafica 1")
       ) %>%
       officer::ph_with(
-        value = rvg::dml(ggobj = grafica_qx),
+        value = rvg::dml(ggobj = grafica_qx_2024_2026),
         location = officer::ph_location_label("Grafica 2")
       ) %>%
       officer::ph_with(
@@ -1318,7 +1273,6 @@ datos_historicos_2020_2025 <- historicos %>%
         use_loc_size = TRUE
       )
   }
-
   # Diapo 5 ----------------------------------------------------------------
   serie_mensual_consultas <- historicos %>%
     dplyr::mutate(
