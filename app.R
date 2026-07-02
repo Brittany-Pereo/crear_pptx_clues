@@ -1,8 +1,8 @@
 # Launch the ShinyApp (Do not remove this comment)
 # To deploy, run: rsconnect::deployApp()
 # Or use the blue button on top of this file
-#mE localiza en la carpeta
-setwd("C:/Users/brittany.pereo/GitHub/crear_pptx_clues")
+# #mE localiza en la carpeta
+# setwd("C:/Users/brittany.pereo/GitHub/crear_pptx_clues")
 
 #Corre las funciones
 pkgload::load_all(export_all = FALSE,

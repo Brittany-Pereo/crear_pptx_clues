@@ -12,12 +12,23 @@ app_ui <- function(request) {
     shinydashboard::dashboardPage(
       shinydashboard::dashboardHeader(
         title = tags$div(
-          icon("hospital"),
-          tags$img(src = "www/logo_gob_mx.png", height = "30px")
-
+          style = "
+            height: 50px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding-left: 5px;
+          ",
+          icon("hospital", style = "font-size: 16px; color: white;"),
+          tags$img(
+            src = "logo_imss.png",
+            height = "32px",
+            style = "object-fit: contain;"
+          )
         ),
         titleWidth = 350
       ),
+
       shinydashboard::dashboardSidebar(
         width = 350,
         shinydashboard::sidebarMenu(
@@ -27,7 +38,6 @@ app_ui <- function(request) {
                                    icon = icon("question-circle"))
         ),
         hr(),
-        # Información del sistema
         div(
           style = "padding: 15px;",
           p(icon("database"), " Información 2020 a la fecha"),
@@ -38,6 +48,7 @@ app_ui <- function(request) {
             style = "font-size: 12px; color: #7f8c8d;")
         )
       ),
+
       shinydashboard::dashboardBody(
         tags$head(
           tags$style(HTML("
@@ -65,8 +76,6 @@ app_ui <- function(request) {
         ),
 
         shinydashboard::tabItems(
-
-          # Tab de consulta
           shinydashboard::tabItem(
             tabName = "consulta",
             fluidRow(
@@ -75,12 +84,11 @@ app_ui <- function(request) {
                 status = "primary",
                 solidHeader = TRUE,
                 width = 12,
-                uiOutput("modulo_consulta") #Aqui se inserta una interfas construida desde el servidos
+                uiOutput("modulo_consulta")
               )
             )
           ),
 
-          # Tab de ayuda
           shinydashboard::tabItem(
             tabName = "ayuda",
             fluidRow(
