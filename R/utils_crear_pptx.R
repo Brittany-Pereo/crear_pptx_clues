@@ -691,6 +691,7 @@ fecha_fin_graf <- lubridate::floor_date(fecha_corte, "month")
 grafica_consultas_periodos <- function(df,
                                        fecha_inicio = "2022-08-01",
                                        fecha_fin    = NULL,
+                                       fecha_fin    = NULL,
                                        titulo = "Consultas totales del IMSS Bienestar",
                                        color_linea = "#6B6B6B",
                                        verde_punto = "#1F5B50",
@@ -699,6 +700,9 @@ grafica_consultas_periodos <- function(df,
                                        fill_2025 = "#F4F0EA",
                                        fill_2026 = "#E9DDCC",
                                        fill_valuebox = "#B99C6D") {
+  if (is.null(fecha_fin)) {
+    fecha_fin <- lubridate::floor_date(Sys.Date(), "month")
+  }
   if (is.null(fecha_fin)) {
     fecha_fin <- lubridate::floor_date(Sys.Date(), "month")
   }
@@ -927,6 +931,11 @@ crear_reporte_productividad <- function(
 ) {
 
   # Variables de corte -----------------------------------------------------
+  fecha_corte <- if (lubridate::wday(Sys.Date()) == 4) {
+    Sys.Date() - 7
+  } else {
+    Sys.Date() - ((as.POSIXlt(Sys.Date())$wday + 4) %% 7)
+  }
   fecha_corte <- if (lubridate::wday(Sys.Date()) == 4) {
     Sys.Date() - 7
   } else {
@@ -1574,6 +1583,7 @@ crear_reporte_productividad <- function(
       location = officer::ph_location_label("ft")
     )
 
+  # Diapo 6 ----------------------------------------------------------------
   # Diapo 6 ----------------------------------------------------------------
   if (hay_indicador_2026(datos_consulta_funcion, "qx")) {
 

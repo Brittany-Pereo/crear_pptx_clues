@@ -1,4 +1,5 @@
 
+
 # R/mod_clues_query.R
 #' Módulo para consultas de CLUES con DuckDB
 #'
@@ -289,6 +290,512 @@ mod_clues_query_server <- function(id, con, clues_info) {
       tabla_datos_imprimir <- crear_excel(clues_a_imprimir, valores$datos, val_personas$datos)
 
       return(tabla_datos_imprimir)
+    })
+
+    datos_anual_grafica <- reactive({
+      req(valores$datos)
+
+      valores$datos %>%
+        mutate(
+          fecha = as.Date(fecha),
+          anio = lubridate::year(fecha)
+        ) %>%
+        filter(anio %in% c(2024, 2025, 2026)) %>%
+        group_by(anio) %>%
+        summarise(
+          consulta_general_anual = sum(consulta_general, na.rm = TRUE),
+          consulta_especialidad_anual = sum(consulta_especialidad, na.rm = TRUE),
+          procedimientos_qx_anual = sum(procedimientos_qx, na.rm = TRUE),
+          egresos_anual = sum(egresos, na.rm = TRUE),
+          .groups = "drop"
+        )
+    })
+
+    metas_filtrado_grafica <- reactive({
+      req(input$clues_select)
+
+      metas %>%
+        dplyr::filter(clues_imb == input$clues_select)
+    })
+
+    crear_grafica_clues <- function(df, variable_sel, titulo,
+                                    datos_anual_grafica, metas_filtrado) {
+
+      fecha_corte <- max(as.Date(df$fecha), na.rm = TRUE)
+      mes_corte <- lubridate::month(fecha_corte)
+      dia_corte <- lubridate::day(fecha_corte)
+
+      col_anual <- dplyr::case_when(
+        variable_sel == "consulta_general" ~ "consulta_general_anual",
+        variable_sel == "consulta_especialidad" ~ "consulta_especialidad_anual",
+        variable_sel == "procedimientos_qx" ~ "procedimientos_qx_anual",
+        variable_sel == "egresos" ~ "egresos_anual",
+        TRUE ~ NA_character_
+      )
+
+      df_avance <- df %>%
+        mutate(
+          fecha = as.Date(fecha),
+          anio = lubridate::year(fecha),
+          fecha_corte_anio = lubridate::ymd(
+            paste0(anio, "-", mes_corte, "-", dia_corte)
+          )
+        ) %>%
+        filter(anio %in% c(2024, 2025, 2026)) %>%
+        group_by(anio) %>%
+        summarise(
+          avance = sum(.data[[variable_sel]][fecha <= fecha_corte_anio], na.rm = TRUE),
+          .groups = "drop"
+        )
+
+      hay_2026 <- df %>%
+        dplyr::mutate(anio = lubridate::year(as.Date(fecha))) %>%
+        dplyr::filter(anio == 2026) %>%
+        dplyr::summarise(
+          hay = any(.data[[variable_sel]] > 0, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        dplyr::pull(hay)
+
+      if (length(hay_2026) == 0 || is.na(hay_2026)) hay_2026 <- FALSE
+
+      df_total <- datos_anual_grafica %>%
+        dplyr::mutate(anio = as.numeric(anio)) %>%
+        dplyr::filter(anio %in% c(2024, 2025, 2026)) %>%
+        dplyr::transmute(
+          anio,
+          total_anual = .data[[col_anual]]
+        ) %>%
+        dplyr::mutate(
+          total_anual = dplyr::case_when(
+            hay_2026 & anio == 2026 & variable_sel == "consulta_general" ~
+              sum(metas_filtrado$meta_general_anual, na.rm = TRUE),
+            hay_2026 & anio == 2026 & variable_sel == "consulta_especialidad" ~
+              sum(metas_filtrado$meta_especialidad_anual, na.rm = TRUE),
+            hay_2026 & anio == 2026 & variable_sel == "procedimientos_qx" ~
+              sum(metas_filtrado$meta_cirugia_anual, na.rm = TRUE),
+            hay_2026 & anio == 2026 & variable_sel == "egresos" ~
+              sum(metas_filtrado$meta_egresos_anual, na.rm = TRUE),
+            TRUE ~ total_anual
+          )
+        )
+
+      df_plot <- df_avance %>%
+        left_join(df_total, by = "anio") %>%
+        mutate(
+          pendiente = pmax(total_anual - avance, 0),
+          anio = as.character(anio)
+        ) %>%
+        select(anio, avance, pendiente, total_anual) %>%
+        tidyr::pivot_longer(
+          cols = c(avance, pendiente),
+          names_to = "tipo",
+          values_to = "valor"
+        ) %>%
+        mutate(
+          tipo = factor(
+            tipo,
+            levels = c("avance", "pendiente"),
+            labels = c("Avance al corte", "Resto del año")
+          )
+        )
+
+      df_plot <- df_plot %>%
+        mutate(
+          color_barra = case_when(
+            anio == "2026" & tipo == "Resto del año" ~ "#B08D57",
+            tipo == "Resto del año" ~ "#D9D2BE",
+            TRUE ~ "#1E5B4F"
+          )
+        )
+
+      etiquetas <- df_plot %>%
+        group_by(anio) %>%
+        summarise(
+          total_anual = sum(valor, na.rm = TRUE),
+          .groups = "drop"
+        )
+
+      etiquetas_valores <- df_avance %>%
+        left_join(df_total, by = "anio") %>%
+        mutate(
+          pendiente = pmax(total_anual - avance, 0),
+          pct_avance = avance / total_anual,
+          anio = as.character(anio),
+          etiqueta_pct = scales::percent(pct_avance, accuracy = 1),
+          etiqueta_avance = scales::comma(avance)
+        )
+
+      ggplot(df_plot, aes(x = anio, y = valor, fill = color_barra)) +
+        geom_col(
+          width = 0.65,
+          position = position_stack(reverse = TRUE)
+        ) +
+        geom_text(
+          data = etiquetas,
+          aes(
+            x = anio,
+            y = total_anual,
+            label = scales::comma(total_anual)
+          ),
+          inherit.aes = FALSE,
+          vjust = -0.4,
+          fontface = "bold",
+          size = 5
+        ) +
+        geom_text(
+          data = etiquetas_valores,
+          aes(
+            x = anio,
+            y = avance / 2,
+            label = etiqueta_avance
+          ),
+          inherit.aes = FALSE,
+          color = "white",
+          fontface = "bold",
+          size = 5
+        ) +
+        geom_text(
+          data = etiquetas_valores,
+          aes(
+            x = anio,
+            y = avance + (pendiente * 0.1),
+            label = etiqueta_pct
+          ),
+          inherit.aes = FALSE,
+          color = "black",
+          fontface = "bold",
+          size = 5
+        ) +
+        scale_fill_identity(
+          guide = "legend",
+          breaks = c("#D9D2BE", "#1E5B4F", "#B08D57"),
+          labels = c("Resto del año", "Avance al corte", "Meta")
+        ) +
+        scale_y_continuous(
+          labels = scales::comma,
+          expand = expansion(mult = c(0, 0.18))
+        ) +
+        labs(title = titulo, x = NULL, y = NULL, fill = NULL) +
+        theme_minimal(base_family = "Noto Sans") +
+        theme(
+          plot.title = element_text(
+            hjust = 0.5,
+            face = "bold",
+            size = 18,
+            color = "#6B7280"
+          ),
+          axis.text.x = element_text(
+            size = 13,
+            face = "bold",
+            color = "#6B7280"
+          ),
+          axis.text.y = element_text(
+            size = 11,
+            color = "#6B7280"
+          ),
+          legend.position = "bottom",
+          legend.text = element_text(
+            size = 14,
+            face = "bold"
+          ),
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor = element_blank()
+        )
+    }
+
+    output$grafica_general <- renderPlot({
+      req(valores$datos, datos_anual_grafica(), metas_filtrado_grafica())
+      crear_grafica_clues(
+        valores$datos,
+        "consulta_general",
+        "Consulta general",
+        datos_anual_grafica(),
+        metas_filtrado_grafica()
+      )
+    })
+
+    output$grafica_especialidad <- renderPlot({
+      req(valores$datos, datos_anual_grafica())
+      crear_grafica_clues(
+        valores$datos,
+        "consulta_especialidad",
+        "Consulta de especialidad",
+        datos_anual_grafica(),
+        metas_filtrado_grafica())
+    })
+
+    output$grafica_qx <- renderPlot({
+      req(valores$datos, datos_anual_grafica())
+      crear_grafica_clues(
+        valores$datos,
+        "procedimientos_qx",
+        "Procedimientos quirúrgicos",
+        datos_anual_grafica(),
+        metas_filtrado_grafica())
+    })
+
+    output$grafica_egresos <- renderPlot({
+      req(valores$datos, datos_anual_grafica())
+      crear_grafica_clues(
+        valores$datos,
+        "egresos",
+        "Egresos",
+        datos_anual_grafica(),
+        metas_filtrado_grafica())
+    })
+
+    datos_anual_grafica <- reactive({
+      req(valores$datos)
+
+      valores$datos %>%
+        mutate(
+          fecha = as.Date(fecha),
+          anio = lubridate::year(fecha)
+        ) %>%
+        filter(anio %in% c(2024, 2025, 2026)) %>%
+        group_by(anio) %>%
+        summarise(
+          consulta_general_anual = sum(consulta_general, na.rm = TRUE),
+          consulta_especialidad_anual = sum(consulta_especialidad, na.rm = TRUE),
+          procedimientos_qx_anual = sum(procedimientos_qx, na.rm = TRUE),
+          egresos_anual = sum(egresos, na.rm = TRUE),
+          .groups = "drop"
+        )
+    })
+
+    metas_filtrado_grafica <- reactive({
+      req(input$clues_select)
+
+      metas %>%
+        dplyr::filter(clues_imb == input$clues_select)
+    })
+
+    crear_grafica_clues <- function(df, variable_sel, titulo,
+                                    datos_anual_grafica, metas_filtrado) {
+
+      fecha_corte <- max(as.Date(df$fecha), na.rm = TRUE)
+      mes_corte <- lubridate::month(fecha_corte)
+      dia_corte <- lubridate::day(fecha_corte)
+
+      col_anual <- dplyr::case_when(
+        variable_sel == "consulta_general" ~ "consulta_general_anual",
+        variable_sel == "consulta_especialidad" ~ "consulta_especialidad_anual",
+        variable_sel == "procedimientos_qx" ~ "procedimientos_qx_anual",
+        variable_sel == "egresos" ~ "egresos_anual",
+        TRUE ~ NA_character_
+      )
+
+      df_avance <- df %>%
+        mutate(
+          fecha = as.Date(fecha),
+          anio = lubridate::year(fecha),
+          fecha_corte_anio = lubridate::ymd(
+            paste0(anio, "-", mes_corte, "-", dia_corte)
+          )
+        ) %>%
+        filter(anio %in% c(2024, 2025, 2026)) %>%
+        group_by(anio) %>%
+        summarise(
+          avance = sum(.data[[variable_sel]][fecha <= fecha_corte_anio], na.rm = TRUE),
+          .groups = "drop"
+        )
+
+      hay_2026 <- df %>%
+        dplyr::mutate(anio = lubridate::year(as.Date(fecha))) %>%
+        dplyr::filter(anio == 2026) %>%
+        dplyr::summarise(
+          hay = any(.data[[variable_sel]] > 0, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        dplyr::pull(hay)
+
+      if (length(hay_2026) == 0 || is.na(hay_2026)) hay_2026 <- FALSE
+
+      df_total <- datos_anual_grafica %>%
+        dplyr::mutate(anio = as.numeric(anio)) %>%
+        dplyr::filter(anio %in% c(2024, 2025, 2026)) %>%
+        dplyr::transmute(
+          anio,
+          total_anual = .data[[col_anual]]
+        ) %>%
+        dplyr::mutate(
+          total_anual = dplyr::case_when(
+            hay_2026 & anio == 2026 & variable_sel == "consulta_general" ~
+              sum(metas_filtrado$meta_general_anual, na.rm = TRUE),
+            hay_2026 & anio == 2026 & variable_sel == "consulta_especialidad" ~
+              sum(metas_filtrado$meta_especialidad_anual, na.rm = TRUE),
+            hay_2026 & anio == 2026 & variable_sel == "procedimientos_qx" ~
+              sum(metas_filtrado$meta_cirugia_anual, na.rm = TRUE),
+            hay_2026 & anio == 2026 & variable_sel == "egresos" ~
+              sum(metas_filtrado$meta_egresos_anual, na.rm = TRUE),
+            TRUE ~ total_anual
+          )
+        )
+
+      df_plot <- df_avance %>%
+        left_join(df_total, by = "anio") %>%
+        mutate(
+          pendiente = pmax(total_anual - avance, 0),
+          anio = as.character(anio)
+        ) %>%
+        select(anio, avance, pendiente, total_anual) %>%
+        tidyr::pivot_longer(
+          cols = c(avance, pendiente),
+          names_to = "tipo",
+          values_to = "valor"
+        ) %>%
+        mutate(
+          tipo = factor(
+            tipo,
+            levels = c("avance", "pendiente"),
+            labels = c("Avance al corte", "Resto del año")
+          )
+        )
+
+      df_plot <- df_plot %>%
+        mutate(
+          color_barra = case_when(
+            anio == "2026" & tipo == "Resto del año" ~ "#B08D57",
+            tipo == "Resto del año" ~ "#D9D2BE",
+            TRUE ~ "#1E5B4F"
+          )
+        )
+
+      etiquetas <- df_plot %>%
+        group_by(anio) %>%
+        summarise(
+          total_anual = sum(valor, na.rm = TRUE),
+          .groups = "drop"
+        )
+
+      etiquetas_valores <- df_avance %>%
+        left_join(df_total, by = "anio") %>%
+        mutate(
+          pendiente = pmax(total_anual - avance, 0),
+          pct_avance = avance / total_anual,
+          anio = as.character(anio),
+          etiqueta_pct = scales::percent(pct_avance, accuracy = 1),
+          etiqueta_avance = scales::comma(avance)
+        )
+
+      ggplot(df_plot, aes(x = anio, y = valor, fill = color_barra)) +
+        geom_col(
+          width = 0.65,
+          position = position_stack(reverse = TRUE)
+        ) +
+        geom_text(
+          data = etiquetas,
+          aes(
+            x = anio,
+            y = total_anual,
+            label = scales::comma(total_anual)
+          ),
+          inherit.aes = FALSE,
+          vjust = -0.4,
+          fontface = "bold",
+          size = 5
+        ) +
+        geom_text(
+          data = etiquetas_valores,
+          aes(
+            x = anio,
+            y = avance / 2,
+            label = etiqueta_avance
+          ),
+          inherit.aes = FALSE,
+          color = "white",
+          fontface = "bold",
+          size = 5
+        ) +
+        geom_text(
+          data = etiquetas_valores,
+          aes(
+            x = anio,
+            y = avance + (pendiente * 0.1),
+            label = etiqueta_pct
+          ),
+          inherit.aes = FALSE,
+          color = "black",
+          fontface = "bold",
+          size = 5
+        ) +
+        scale_fill_identity(
+          guide = "legend",
+          breaks = c("#D9D2BE", "#1E5B4F", "#B08D57"),
+          labels = c("Resto del año", "Avance al corte", "Meta")
+        ) +
+        scale_y_continuous(
+          labels = scales::comma,
+          expand = expansion(mult = c(0, 0.18))
+        ) +
+        labs(title = titulo, x = NULL, y = NULL, fill = NULL) +
+        theme_minimal(base_family = "Noto Sans") +
+        theme(
+          plot.title = element_text(
+            hjust = 0.5,
+            face = "bold",
+            size = 18,
+            color = "#6B7280"
+          ),
+          axis.text.x = element_text(
+            size = 13,
+            face = "bold",
+            color = "#6B7280"
+          ),
+          axis.text.y = element_text(
+            size = 11,
+            color = "#6B7280"
+          ),
+          legend.position = "bottom",
+          legend.text = element_text(
+            size = 14,
+            face = "bold"
+          ),
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor = element_blank()
+        )
+    }
+
+    output$grafica_general <- renderPlot({
+      req(valores$datos, datos_anual_grafica(), metas_filtrado_grafica())
+      crear_grafica_clues(
+        valores$datos,
+        "consulta_general",
+        "Consulta general",
+        datos_anual_grafica(),
+        metas_filtrado_grafica()
+      )
+    })
+
+    output$grafica_especialidad <- renderPlot({
+      req(valores$datos, datos_anual_grafica())
+      crear_grafica_clues(
+        valores$datos,
+        "consulta_especialidad",
+        "Consulta de especialidad",
+        datos_anual_grafica(),
+        metas_filtrado_grafica())
+    })
+
+    output$grafica_qx <- renderPlot({
+      req(valores$datos, datos_anual_grafica())
+      crear_grafica_clues(
+        valores$datos,
+        "procedimientos_qx",
+        "Procedimientos quirúrgicos",
+        datos_anual_grafica(),
+        metas_filtrado_grafica())
+    })
+
+    output$grafica_egresos <- renderPlot({
+      req(valores$datos, datos_anual_grafica())
+      crear_grafica_clues(
+        valores$datos,
+        "egresos",
+        "Egresos",
+        datos_anual_grafica(),
+        metas_filtrado_grafica())
     })
 
     datos_anual_grafica <- reactive({
