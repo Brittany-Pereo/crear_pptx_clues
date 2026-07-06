@@ -1204,136 +1204,7 @@ crear_reporte_productividad <- function(
     master = "Tema de Office"
   )
 
-  # Diapo 3: históricos ----------------------------------------------------
-  datos_historicos_2020_2025 <- historicos %>%
-    dplyr::mutate(
-      consulta_general_tmp = obtener_col(., "consulta_general") +
-        obtener_col(., "consulta_gral"),
-      consulta_esp_tmp = obtener_col(., "consulta_especialidad") +
-        obtener_col(., "consulta_esp"),
-      procedimientos_qx_tmp = obtener_col(., "procedimientos_qx"),
-      egresos_tmp = obtener_col(., "egresos")
-    ) %>%
-    dplyr::filter(
-      clock::get_year(fecha) >= 2020,
-      clock::get_year(fecha) <= 2025,
-      format(fecha, "%m-%d") <= format(fecha_corte_15, "%m-%d")
-    ) %>%
-    dplyr::mutate(
-      anio = as.character(clock::get_year(fecha)),
-      numero_de_semana = lubridate::isoweek(fecha_corte_15)
-    ) %>%
-    dplyr::group_by(anio, numero_de_semana) %>%
-    dplyr::summarise(
-      consulta_gral = sum(consulta_general_tmp, na.rm = TRUE),
-      consulta_esp  = sum(consulta_esp_tmp, na.rm = TRUE),
-      qx            = sum(procedimientos_qx_tmp, na.rm = TRUE),
-      egresos       = sum(egresos_tmp, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    dplyr::mutate(
-      total_consultas = dplyr::case_when(
-        consulta_gral > 0 & consulta_esp > 0 ~ consulta_gral + consulta_esp,
-        consulta_gral > 0 ~ consulta_gral,
-        consulta_esp > 0 ~ consulta_esp,
-        TRUE ~ 0
-      )
-    ) %>%
-    dplyr::left_join(
-      datos_anual %>%
-        dplyr::mutate(anio = as.character(anio)),
-      by = "anio"
-    ) %>%
-    dplyr::mutate(
-      consulta_gral_anual = tidyr::replace_na(consulta_gral_anual, 0),
-      consulta_esp_anual  = tidyr::replace_na(consulta_esp_anual, 0),
-      qx_anual            = tidyr::replace_na(qx_anual, 0),
-      total_consultas_anual = dplyr::case_when(
-        consulta_gral_anual > 0 & consulta_esp_anual > 0 ~
-          consulta_gral_anual + consulta_esp_anual,
-        consulta_gral_anual > 0 ~ consulta_gral_anual,
-        consulta_esp_anual > 0 ~ consulta_esp_anual,
-        TRUE ~ 0
-      )
-    ) %>%
-    dplyr::arrange(anio)
-
-  hay_consultas_2020 <- any(
-    datos_historicos_2020_2025$total_consultas > 0,
-    na.rm = TRUE
-  )
-
-  hay_qx_2020 <- any(
-    datos_historicos_2020_2025$qx > 0 |
-      datos_historicos_2020_2025$egresos > 0,
-    na.rm = TRUE
-  )
-
-  if (hay_consultas_2020) {
-
-    grafica_consultas_2020_2025 <- grafica_planeacion_historica(
-      df = datos_historicos_2020_2025,
-      col_total = "total_consultas_anual",
-      col_avance = "total_consultas",
-      titulo = "Consultas totales"
-    )
-
-    if (hay_qx_2020) {
-
-      grafica_qx_2020_2025 <- grafica_planeacion_historica(
-        df = datos_historicos_2020_2025,
-        col_total = "qx_anual",
-        col_avance = "qx",
-        titulo = "Procedimientos quirúrgicos"
-      )
-
-      pptx <- pptx %>%
-        officer::add_slide(
-          layout = "1_Historico consultas y procedimientos",
-          master = "Tema de Office"
-        ) %>%
-        officer::ph_with(
-          "Productividad IMSS Bienestar",
-          officer::ph_location_label("Título 1")
-        ) %>%
-        officer::ph_with(
-          value = rvg::dml(ggobj = grafica_consultas_2020_2025),
-          location = officer::ph_location_label("Grafica 1")
-        ) %>%
-        officer::ph_with(
-          value = rvg::dml(ggobj = grafica_qx_2020_2025),
-          location = officer::ph_location_label("Grafica 2")
-        ) %>%
-        officer::ph_with(
-          value = paste0("Del 01 de enero al ", fecha_portada),
-          location = officer::ph_location_label("fecha"),
-          use_loc_size = TRUE
-        )
-
-    } else {
-
-      pptx <- pptx %>%
-        officer::add_slide(
-          layout = "1_Historico consultas",
-          master = "Tema de Office"
-        ) %>%
-        officer::ph_with(
-          "Productividad IMSS Bienestar",
-          officer::ph_location_label("Título 1")
-        ) %>%
-        officer::ph_with(
-          value = rvg::dml(ggobj = grafica_consultas_2020_2025),
-          location = officer::ph_location_label("Grafica 1")
-        ) %>%
-        officer::ph_with(
-          value = paste0("Del 01 de enero al ", fecha_portada),
-          location = officer::ph_location_label("fecha"),
-          use_loc_size = TRUE
-        )
-    }
-  }
-
-  # Diapo 4: 2024-2026, solo si hay 2026 ----------------------------------
+  # Diapo 3: 2024-2026, solo si hay 2026 ----------------------------------
   if (hay_fila_2026) {
 
     datos_2024_2026 <- datos_consulta_funcion %>%
@@ -1541,6 +1412,135 @@ crear_reporte_productividad <- function(
 
   } else {
     message("Sin datos 2026: se imprimen valueboxes en cero y se omite diapo 4.")
+  }
+
+  # Diapo 4: históricos ----------------------------------------------------
+  datos_historicos_2020_2025 <- historicos %>%
+    dplyr::mutate(
+      consulta_general_tmp = obtener_col(., "consulta_general") +
+        obtener_col(., "consulta_gral"),
+      consulta_esp_tmp = obtener_col(., "consulta_especialidad") +
+        obtener_col(., "consulta_esp"),
+      procedimientos_qx_tmp = obtener_col(., "procedimientos_qx"),
+      egresos_tmp = obtener_col(., "egresos")
+    ) %>%
+    dplyr::filter(
+      clock::get_year(fecha) >= 2020,
+      clock::get_year(fecha) <= 2025,
+      format(fecha, "%m-%d") <= format(fecha_corte_15, "%m-%d")
+    ) %>%
+    dplyr::mutate(
+      anio = as.character(clock::get_year(fecha)),
+      numero_de_semana = lubridate::isoweek(fecha_corte_15)
+    ) %>%
+    dplyr::group_by(anio, numero_de_semana) %>%
+    dplyr::summarise(
+      consulta_gral = sum(consulta_general_tmp, na.rm = TRUE),
+      consulta_esp  = sum(consulta_esp_tmp, na.rm = TRUE),
+      qx            = sum(procedimientos_qx_tmp, na.rm = TRUE),
+      egresos       = sum(egresos_tmp, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    dplyr::mutate(
+      total_consultas = dplyr::case_when(
+        consulta_gral > 0 & consulta_esp > 0 ~ consulta_gral + consulta_esp,
+        consulta_gral > 0 ~ consulta_gral,
+        consulta_esp > 0 ~ consulta_esp,
+        TRUE ~ 0
+      )
+    ) %>%
+    dplyr::left_join(
+      datos_anual %>%
+        dplyr::mutate(anio = as.character(anio)),
+      by = "anio"
+    ) %>%
+    dplyr::mutate(
+      consulta_gral_anual = tidyr::replace_na(consulta_gral_anual, 0),
+      consulta_esp_anual  = tidyr::replace_na(consulta_esp_anual, 0),
+      qx_anual            = tidyr::replace_na(qx_anual, 0),
+      total_consultas_anual = dplyr::case_when(
+        consulta_gral_anual > 0 & consulta_esp_anual > 0 ~
+          consulta_gral_anual + consulta_esp_anual,
+        consulta_gral_anual > 0 ~ consulta_gral_anual,
+        consulta_esp_anual > 0 ~ consulta_esp_anual,
+        TRUE ~ 0
+      )
+    ) %>%
+    dplyr::arrange(anio)
+
+  hay_consultas_2020 <- any(
+    datos_historicos_2020_2025$total_consultas > 0,
+    na.rm = TRUE
+  )
+
+  hay_qx_2020 <- any(
+    datos_historicos_2020_2025$qx > 0 |
+      datos_historicos_2020_2025$egresos > 0,
+    na.rm = TRUE
+  )
+
+  if (hay_consultas_2020) {
+
+    grafica_consultas_2020_2025 <- grafica_planeacion_historica(
+      df = datos_historicos_2020_2025,
+      col_total = "total_consultas_anual",
+      col_avance = "total_consultas",
+      titulo = "Consultas totales"
+    )
+
+    if (hay_qx_2020) {
+
+      grafica_qx_2020_2025 <- grafica_planeacion_historica(
+        df = datos_historicos_2020_2025,
+        col_total = "qx_anual",
+        col_avance = "qx",
+        titulo = "Procedimientos quirúrgicos"
+      )
+
+      pptx <- pptx %>%
+        officer::add_slide(
+          layout = "1_Historico consultas y procedimientos",
+          master = "Tema de Office"
+        ) %>%
+        officer::ph_with(
+          "Productividad IMSS Bienestar",
+          officer::ph_location_label("Título 1")
+        ) %>%
+        officer::ph_with(
+          value = rvg::dml(ggobj = grafica_consultas_2020_2025),
+          location = officer::ph_location_label("Grafica 1")
+        ) %>%
+        officer::ph_with(
+          value = rvg::dml(ggobj = grafica_qx_2020_2025),
+          location = officer::ph_location_label("Grafica 2")
+        ) %>%
+        officer::ph_with(
+          value = paste0("Del 01 de enero al ", fecha_portada),
+          location = officer::ph_location_label("fecha"),
+          use_loc_size = TRUE
+        )
+
+    } else {
+
+      pptx <- pptx %>%
+        officer::add_slide(
+          layout = "1_Historico consultas",
+          master = "Tema de Office"
+        ) %>%
+        officer::ph_with(
+          "Productividad IMSS Bienestar",
+          officer::ph_location_label("Título 1")
+        ) %>%
+        officer::ph_with(
+          value = rvg::dml(ggobj = grafica_consultas_2020_2025),
+          location = officer::ph_location_label("Grafica 1")
+        ) %>%
+        officer::ph_with(
+          value = paste0("Del 01 de enero al ", fecha_portada),
+          location = officer::ph_location_label("fecha"),
+          use_loc_size = TRUE
+        )
+    }
   }
 
   # Diapo 5 ----------------------------------------------------------------
