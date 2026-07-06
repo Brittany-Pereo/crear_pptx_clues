@@ -687,7 +687,7 @@ ft_planeacion <- function(df,
   ft
 }
 # Grafica temporal --------------------------------------------------------
-fecha_fin_graf <- lubridate::floor_date(fecha_corte, "month")
+#fecha_fin_graf <- lubridate::floor_date(fecha_corte, "month")
 grafica_consultas_periodos <- function(df,
                                        fecha_inicio = "2022-08-01",
                                        fecha_fin    = NULL,
@@ -742,15 +742,15 @@ grafica_consultas_periodos <- function(df,
 
   puntos_destacados <- df %>%
     dplyr::filter(
-      lubridate::month(fecha) == mes_destacado,
-      lubridate::year(fecha) < 2026
+      clock::get_month(fecha) == mes_destacado,
+      clock::get_year(fecha) < 2026
     ) %>%
     dplyr::distinct(fecha, .keep_all = TRUE)
 
   punto_2026 <- df %>%
     dplyr::filter(
-      lubridate::year(fecha) == 2026,
-      lubridate::month(fecha) == mes_destacado
+      clock::get_year(fecha) == 2026,
+      clock::get_month(fecha) == mes_destacado
     ) %>%
     dplyr::slice(1)
 
@@ -926,20 +926,73 @@ crear_reporte_productividad <- function(
     ruta_master = "inst/app/data/master_presentacion.pptx"
 ) {
 
+  # Helpers ----------------------------------------------------------------
+  rellenar_anios <- function(df, anios = 2020:2026) {
+    tibble::tibble(anio = anios) %>%
+      dplyr::left_join(df, by = "anio") %>%
+      dplyr::mutate(
+        dplyr::across(
+          where(is.numeric),
+          ~ tidyr::replace_na(.x, 0)
+        )
+      )
+  }
+
+  asegurar_columnas <- function(df, cols) {
+    faltantes <- setdiff(cols, names(df))
+    if (length(faltantes) > 0) {
+      df[faltantes] <- 0
+    }
+    df
+  }
+
   # Variables de corte -----------------------------------------------------
   fecha_corte <- if (lubridate::wday(Sys.Date()) == 4) {
     Sys.Date() - 7
   } else {
     Sys.Date() - ((as.POSIXlt(Sys.Date())$wday + 4) %% 7)
   }
-  fecha_corte <- if (lubridate::wday(Sys.Date()) == 4) {
-    Sys.Date() - 7
-  } else {
-    Sys.Date() - ((as.POSIXlt(Sys.Date())$wday + 4) %% 7)
-  }
 
-  fecha_portada <- format(fecha_corte, "%d de %B de %Y")
-  mes_nombre <- stringr::str_to_title(format(fecha_corte, "%B"))
+  fecha_portada <- clock::date_format(
+    fecha_corte,
+    format = "%d de %B de %Y",
+    locale = clock::clock_locale("es")
+  )
+
+  mes_nombre <- stringr::str_to_title(
+    clock::date_format(
+      fecha_corte,
+      format = "%B",
+      locale = clock::clock_locale("es")
+    )
+  )
+
+  fecha_corte_15 <- clock::date_build(
+    year = clock::get_year(fecha_corte),
+    month = clock::get_month(fecha_corte),
+    day = 15
+  )
+
+  fecha_fin_graf <- fecha_corte_15
+
+  # Limpieza inicial -------------------------------------------------------
+  historicos <- historicos %>%
+    dplyr::mutate(fecha = clock::as_date(fecha))
+
+  procedimientos_personas <- procedimientos_personas %>%
+    dplyr::mutate(
+      fecha = as.numeric(fecha),
+      tipo_procedimiento = dplyr::case_when(
+        tipo_procedimiento == "consulta total" ~ "total_consultas",
+        tipo_procedimiento == "general" ~ "consulta_gral",
+        tipo_procedimiento == "especialidad" ~ "consulta_esp",
+        tipo_procedimiento == "qx" ~ "qx",
+        tipo_procedimiento == "egresos" ~ "egresos",
+        TRUE ~ tipo_procedimiento
+      )
+    )
+
+  hay_fila_2026 <- any(procedimientos_personas$fecha == 2026, na.rm = TRUE)
 
   # Filtrado por unidad ----------------------------------------------------
   clues_info_filtrado <- clues_info %>%
@@ -948,8 +1001,18 @@ crear_reporte_productividad <- function(
   metas_filtrado <- metas %>%
     dplyr::filter(clues_imb == codigo_clues)
 
+  if (nrow(clues_info_filtrado) == 0) {
+    stop("No se encontró el codigo_clues en clues_info.")
+  }
+
   if (nrow(metas_filtrado) == 0) {
-    stop(paste0("No hay metas para la CLUES: ", codigo_clues))
+    metas_filtrado <- tibble::tibble(
+      clues_imb = codigo_clues,
+      meta_general_anual = 0,
+      meta_especialidad_anual = 0,
+      meta_cirugia_anual = 0,
+      meta_egresos_anual = 0
+    )
   }
 
   meta_total_consultas <- sum(
@@ -962,22 +1025,6 @@ crear_reporte_productividad <- function(
     dplyr::coalesce(metas_filtrado$meta_cirugia_anual, 0),
     na.rm = TRUE
   )
-
-  procedimientos_personas <- procedimientos_personas %>%
-    dplyr::mutate(
-      tipo_procedimiento = dplyr::case_when(
-        tipo_procedimiento == "consulta total" ~ "total_consultas",
-        tipo_procedimiento == "general" ~ "consulta_gral",
-        tipo_procedimiento == "especialidad" ~ "consulta_esp",
-        tipo_procedimiento == "qx" ~ "qx",
-        tipo_procedimiento == "egresos" ~ "egresos",
-        TRUE ~ tipo_procedimiento
-      )
-    )
-
-  if (nrow(clues_info_filtrado) == 0) {
-    stop("No se encontró el codigo_clues en clues_info.")
-  }
 
   # Presentación -----------------------------------------------------------
   pptx <- officer::read_pptx(ruta_master)
@@ -998,42 +1045,27 @@ crear_reporte_productividad <- function(
       location = officer::ph_location_label("Marcador de contenido 2")
     )
 
-  # Value boxes ------------------------------------------------------------
+  # Datos base -------------------------------------------------------------
   cols_metricas <- c(
-    "consulta_gral", "consulta_esp",
-    "qx", "total_consultas", "egresos")
+    "consulta_gral",
+    "consulta_esp",
+    "qx",
+    "total_consultas",
+    "egresos"
+  )
 
   datos_anual <- historicos %>%
-    dplyr::mutate(anio = lubridate::year(fecha)) %>%
+    dplyr::mutate(anio = clock::get_year(fecha)) %>%
     dplyr::group_by(anio) %>%
     dplyr::summarise(
-      consulta_gral_anual   = sum(consulta_general, na.rm = TRUE),
-      consulta_esp_anual    = sum(consulta_especialidad, na.rm = TRUE),
-      qx_anual              = sum(procedimientos_qx, na.rm = TRUE),
-      total_consultas_anual = sum(consulta_total, na.rm = TRUE),
-      egresos_anual         = sum(egresos, na.rm = TRUE),
+      consulta_gral_anual   = sum(obtener_col(dplyr::cur_data_all(), "consulta_general"), na.rm = TRUE),
+      consulta_esp_anual    = sum(obtener_col(dplyr::cur_data_all(), "consulta_especialidad"), na.rm = TRUE),
+      qx_anual              = sum(obtener_col(dplyr::cur_data_all(), "procedimientos_qx"), na.rm = TRUE),
+      total_consultas_anual = sum(obtener_col(dplyr::cur_data_all(), "consulta_total"), na.rm = TRUE),
+      egresos_anual         = sum(obtener_col(dplyr::cur_data_all(), "egresos"), na.rm = TRUE),
       .groups = "drop"
-    )
-
-  datos_avance <- historicos %>%
-    dplyr::mutate(
-      anio = lubridate::year(fecha),
-      fecha_corte_anual = lubridate::make_date(
-        anio,
-        lubridate::month(fecha_corte),
-        lubridate::day(fecha_corte)
-      )
     ) %>%
-    dplyr::filter(fecha <= fecha_corte_anual) %>%
-    dplyr::group_by(anio) %>%
-    dplyr::summarise(
-      consulta_gral   = sum(consulta_general, na.rm = TRUE),
-      consulta_esp    = sum(consulta_especialidad, na.rm = TRUE),
-      qx              = sum(procedimientos_qx, na.rm = TRUE),
-      total_consultas = sum(consulta_total, na.rm = TRUE),
-      egresos         = sum(egresos, na.rm = TRUE),
-      .groups = "drop"
-    )
+    rellenar_anios(2020:2026)
 
   datos_consulta_funcion <- procedimientos_personas %>%
     dplyr::transmute(
@@ -1045,14 +1077,13 @@ crear_reporte_productividad <- function(
       names_from = origen,
       values_from = total_proc_distintas
     ) %>%
+    rellenar_anios(2024:2026) %>%
+    asegurar_columnas(cols_metricas) %>%
     dplyr::left_join(datos_anual, by = "anio") %>%
     dplyr::arrange(anio) %>%
     dplyr::mutate(
-      consulta_gral   = tidyr::replace_na(consulta_gral, 0),
-      consulta_esp    = tidyr::replace_na(consulta_esp, 0),
-      qx              = tidyr::replace_na(qx, 0),
-      total_consultas = tidyr::replace_na(total_consultas, 0),
-      egresos         = tidyr::replace_na(egresos, 0),
+      dplyr::across(where(is.numeric), ~ tidyr::replace_na(.x, 0)),
+
       total_consultas_meta = dplyr::if_else(
         anio == 2026,
         meta_total_consultas,
@@ -1065,6 +1096,23 @@ crear_reporte_productividad <- function(
       )
     )
 
+  datos_curps <- procedimientos_personas %>%
+    dplyr::select(
+      anio = fecha,
+      origen = tipo_procedimiento,
+      total_curps_distintas = personas
+    ) %>%
+    tidyr::pivot_wider(
+      names_from = origen,
+      values_from = total_curps_distintas
+    ) %>%
+    rellenar_anios(2024:2026) %>%
+    asegurar_columnas(cols_metricas) %>%
+    dplyr::mutate(
+      dplyr::across(where(is.numeric), ~ tidyr::replace_na(.x, 0))
+    )
+
+  # Comparativos -----------------------------------------------------------
   for (col in cols_metricas) {
     for (ref in c(2024, 2025)) {
 
@@ -1078,24 +1126,31 @@ crear_reporte_productividad <- function(
           !is.na(valor_2026) &
           !is.na(valor_ref) &
           valor_ref != 0,
-        round(100*(1-(valor_ref/valor_2026)), 0),
+        round(100 * (1 - (valor_ref / valor_2026)), 0),
+        0
+      )
+
+      valor_2026_curp <- valor_anio_col(datos_curps, col, 2026)
+      valor_ref_curp  <- valor_anio_col(datos_curps, col, ref)
+
+      datos_curps[[nombre_var]] <- dplyr::if_else(
+        datos_curps$anio == 2026 &
+          !is.na(valor_2026_curp) &
+          !is.na(valor_ref_curp) &
+          valor_ref_curp != 0,
+        round(100 * (1 - (valor_ref_curp / valor_2026_curp)), 0),
         0
       )
     }
   }
 
+  # Value boxes ------------------------------------------------------------
   mapa_titulos_consultas <- c(
     total_consultas = "Consultas totales",
     consulta_gral   = "Consulta general",
     consulta_esp    = "Especialidad",
     qx              = "Procedimientos quirúrgicos",
     egresos         = "Egresos"
-  )
-
-  vbox_consultas <- crear_valueboxes_2026(
-    datos_consulta_funcion,
-    mapa_titulos_consultas,
-    incluir_comparativos = TRUE
   )
 
   mapa_titulos_curp <- c(
@@ -1106,40 +1161,11 @@ crear_reporte_productividad <- function(
     egresos         = "Egresadas"
   )
 
-  datos_curps <- procedimientos_personas %>%
-    dplyr::select(
-      anio = fecha,
-      origen = tipo_procedimiento,
-      total_curps_distintas = personas
-    ) %>%
-    tidyr::pivot_wider(
-      names_from = origen,
-      values_from = total_curps_distintas
-    )
-
-  cols_faltantes <- setdiff(names(mapa_titulos_curp), names(datos_curps))
-  if (length(cols_faltantes) > 0) {
-    datos_curps[cols_faltantes] <- 0
-  }
-
-  for (col in cols_metricas) {
-    for (ref in c(2024, 2025)) {
-
-      nombre_var <- paste0("var_2026_vs_", ref, "_", col)
-
-      valor_2026 <- valor_anio_col(datos_curps, col, 2026)
-      valor_ref  <- valor_anio_col(datos_curps, col, ref)
-
-      datos_curps[[nombre_var]] <- dplyr::if_else(
-        datos_curps$anio == 2026 &
-          !is.na(valor_2026) &
-          !is.na(valor_ref) &
-          valor_ref != 0,
-        round(100*(1-(valor_ref/valor_2026)), 0),
-        0
-      )
-    }
-  }
+  vbox_consultas <- crear_valueboxes_2026(
+    datos_consulta_funcion,
+    mapa_titulos_consultas,
+    incluir_comparativos = TRUE
+  )
 
   vbox_curps <- crear_valueboxes_2026(
     datos_curps,
@@ -1168,28 +1194,17 @@ crear_reporte_productividad <- function(
     egresos         = vbox_curps$egresos_p
   )
 
-  boxes_superior_a_imprimir <- lista_boxes_superior[metricas_vb]
-  boxes_inferior_a_imprimir <- lista_boxes_inferior[metricas_vb]
-
   pptx <- imprimir_valueboxes_dinamicos(
     pptx = pptx,
     layout_name = layout_vb,
-    boxes_superior = boxes_superior_a_imprimir,
-    boxes_inferior = boxes_inferior_a_imprimir,
+    boxes_superior = lista_boxes_superior[metricas_vb],
+    boxes_inferior = lista_boxes_inferior[metricas_vb],
     titulo = "Productividad IMSS Bienestar",
-    fecha = paste0("Del 01 de enero al ",fecha_portada),
+    fecha = paste0("Del 01 de enero al ", fecha_portada),
     master = "Tema de Office"
   )
 
-  # Diapo 3 ----------------------------------------------------------------
-  fecha_corte_15 <- as.Date(
-    paste0(
-      lubridate::year(fecha_corte), "-",
-      stringr::str_pad(lubridate::month(fecha_corte), 2, pad = "0"),
-      "-15"
-    )
-  )
-
+  # Diapo 3: históricos ----------------------------------------------------
   datos_historicos_2020_2025 <- historicos %>%
     dplyr::mutate(
       consulta_general_tmp = obtener_col(., "consulta_general") +
@@ -1200,12 +1215,12 @@ crear_reporte_productividad <- function(
       egresos_tmp = obtener_col(., "egresos")
     ) %>%
     dplyr::filter(
-      lubridate::year(fecha) >= 2020,
-      lubridate::year(fecha) <= 2025,
+      clock::get_year(fecha) >= 2020,
+      clock::get_year(fecha) <= 2025,
       format(fecha, "%m-%d") <= format(fecha_corte_15, "%m-%d")
     ) %>%
     dplyr::mutate(
-      anio = as.character(lubridate::year(fecha)),
+      anio = as.character(clock::get_year(fecha)),
       numero_de_semana = lubridate::isoweek(fecha_corte_15)
     ) %>%
     dplyr::group_by(anio, numero_de_semana) %>%
@@ -1233,7 +1248,6 @@ crear_reporte_productividad <- function(
       consulta_gral_anual = tidyr::replace_na(consulta_gral_anual, 0),
       consulta_esp_anual  = tidyr::replace_na(consulta_esp_anual, 0),
       qx_anual            = tidyr::replace_na(qx_anual, 0),
-
       total_consultas_anual = dplyr::case_when(
         consulta_gral_anual > 0 & consulta_esp_anual > 0 ~
           consulta_gral_anual + consulta_esp_anual,
@@ -1243,9 +1257,6 @@ crear_reporte_productividad <- function(
       )
     ) %>%
     dplyr::arrange(anio)
-
-  print("REVISION DATOS HISTORICOS")
-  print(datos_historicos_2020_2025)
 
   hay_consultas_2020 <- any(
     datos_historicos_2020_2025$total_consultas > 0,
@@ -1321,273 +1332,282 @@ crear_reporte_productividad <- function(
         )
     }
   }
-  # Diapo 4 -----------------------------------------------------------------
-  for (col in c("consulta_gral", "consulta_esp", "qx", "egresos")) {
-    if (!col %in% names(datos_consulta_funcion)) {
-      datos_consulta_funcion[[col]] <- 0
-    }
-  }
 
-  datos_2024_2026 <- datos_consulta_funcion %>%
-    dplyr::mutate(
-      anio_num = as.integer(anio),
+  # Diapo 4: 2024-2026, solo si hay 2026 ----------------------------------
+  if (hay_fila_2026) {
 
-      consulta_gral = tidyr::replace_na(consulta_gral, 0),
-      consulta_esp  = tidyr::replace_na(consulta_esp, 0),
-      qx            = tidyr::replace_na(qx, 0),
-      egresos       = tidyr::replace_na(egresos, 0),
+    datos_2024_2026 <- datos_consulta_funcion %>%
+      dplyr::mutate(
+        anio_num = as.integer(anio),
 
-      consulta_gral_anual = tidyr::replace_na(consulta_gral_anual, 0),
-      consulta_esp_anual  = tidyr::replace_na(consulta_esp_anual, 0),
-      qx_anual            = tidyr::replace_na(qx_anual, 0),
+        consulta_gral = tidyr::replace_na(consulta_gral, 0),
+        consulta_esp  = tidyr::replace_na(consulta_esp, 0),
+        qx            = tidyr::replace_na(qx, 0),
+        egresos       = tidyr::replace_na(egresos, 0),
 
-      total_consultas = dplyr::case_when(
-        consulta_gral > 0 & consulta_esp > 0 ~ consulta_gral + consulta_esp,
-        consulta_gral > 0 ~ consulta_gral,
-        consulta_esp > 0 ~ consulta_esp,
-        TRUE ~ 0
-      ),
+        consulta_gral_anual = tidyr::replace_na(consulta_gral_anual, 0),
+        consulta_esp_anual  = tidyr::replace_na(consulta_esp_anual, 0),
+        qx_anual            = tidyr::replace_na(qx_anual, 0),
 
-      total_consultas_meta = dplyr::case_when(
-        anio_num == 2026 & !is.na(total_consultas_meta) ~ total_consultas_meta,
-        anio_num == 2026 ~ total_consultas,
-        consulta_gral_anual > 0 & consulta_esp_anual > 0 ~
-          consulta_gral_anual + consulta_esp_anual,
-        consulta_gral_anual > 0 ~ consulta_gral_anual,
-        consulta_esp_anual > 0 ~ consulta_esp_anual,
-        total_consultas_anual > 0 ~ total_consultas_anual,
-        TRUE ~ total_consultas
-      ),
+        total_consultas = dplyr::case_when(
+          consulta_gral > 0 & consulta_esp > 0 ~ consulta_gral + consulta_esp,
+          consulta_gral > 0 ~ consulta_gral,
+          consulta_esp > 0 ~ consulta_esp,
+          TRUE ~ 0
+        ),
 
-      qx_meta = dplyr::case_when(
-        anio_num == 2026 & !is.na(qx_meta) ~ qx_meta,
-        anio_num == 2026 ~ qx,
-        qx_anual > 0 ~ qx_anual,
-        TRUE ~ qx
-      )
-    ) %>%
-    dplyr::filter(anio_num %in% c(2024, 2025, 2026))
+        total_consultas_meta = dplyr::case_when(
+          anio_num == 2026 & !is.na(total_consultas_meta) ~ total_consultas_meta,
+          anio_num == 2026 ~ total_consultas,
+          consulta_gral_anual > 0 & consulta_esp_anual > 0 ~
+            consulta_gral_anual + consulta_esp_anual,
+          consulta_gral_anual > 0 ~ consulta_gral_anual,
+          consulta_esp_anual > 0 ~ consulta_esp_anual,
+          total_consultas_anual > 0 ~ total_consultas_anual,
+          TRUE ~ total_consultas
+        ),
 
-  print("REVISION DATOS 2024_2026")
-  print(datos_2024_2026)
+        qx_meta = dplyr::case_when(
+          anio_num == 2026 & !is.na(qx_meta) ~ qx_meta,
+          anio_num == 2026 ~ qx,
+          qx_anual > 0 ~ qx_anual,
+          TRUE ~ qx
+        )
+      ) %>%
+      dplyr::filter(anio_num %in% c(2024, 2025, 2026))
 
-  hay_consultas_2024_2026 <- any(
-    datos_2024_2026$total_consultas > 0,
-    na.rm = TRUE
-  )
-
-  hay_qx_2024_2026 <- any(
-    datos_2024_2026$qx > 0 |
-      datos_2024_2026$egresos > 0,
-    na.rm = TRUE
-  )
-
-  if (hay_consultas_2024_2026) {
-    datos_2024_2026 %>%
-      dplyr::select(
-        anio,
-        total_consultas,
-        total_consultas_meta,
-        qx,
-        qx_meta
-      )
-
-    grafica_consultas_2024_2026 <- grafica_planeacion_2024_2026(
-      df = datos_2024_2026,
-      col_total = "total_consultas_meta",
-      col_avance = "total_consultas",
-      titulo = "Consultas totales"
+    hay_consultas_2024_2026 <- any(
+      datos_2024_2026$total_consultas > 0,
+      na.rm = TRUE
     )
 
-    indicadores_consulta <- c()
-    etiquetas_consulta <- c()
-
-    if (hay_indicador_2026(datos_2024_2026, "consulta_gral")) {
-      indicadores_consulta <- c(indicadores_consulta, "consulta_gral")
-      etiquetas_consulta <- c(etiquetas_consulta, "Consultas generales")
-    }
-
-    if (hay_indicador_2026(datos_2024_2026, "consulta_esp")) {
-      indicadores_consulta <- c(indicadores_consulta, "consulta_esp")
-      etiquetas_consulta <- c(etiquetas_consulta, "Consultas de especialidad*")
-    }
-
-    tabla_consultas <- armar_tabla_dinamica(
-      df = datos_2024_2026,
-      indicadores = indicadores_consulta,
-      etiquetas = etiquetas_consulta,
-      mes_nombre = "Acumulado"
+    hay_qx_2024_2026 <- any(
+      datos_2024_2026$qx > 0 |
+        datos_2024_2026$egresos > 0,
+      na.rm = TRUE
     )
 
-    if (hay_qx_2024_2026) {
+    if (hay_consultas_2024_2026) {
 
-      grafica_qx_2024_2026 <- grafica_planeacion_2024_2026(
+      grafica_consultas_2024_2026 <- grafica_planeacion_2024_2026(
         df = datos_2024_2026,
-        col_total = "qx_meta",
-        col_avance = "qx",
-        titulo = "Procedimientos quirúrgicos"
+        col_total = "total_consultas_meta",
+        col_avance = "total_consultas",
+        titulo = "Consultas totales"
       )
 
-      indicadores_proc <- c()
-      etiquetas_proc <- c()
+      indicadores_consulta <- c()
+      etiquetas_consulta <- c()
 
-      if (hay_indicador_2026(datos_2024_2026, "qx")) {
-        indicadores_proc <- c(indicadores_proc, "qx")
-        etiquetas_proc <- c(etiquetas_proc, "Procedimientos quirúrgicos")
+      if (hay_indicador_2026(datos_2024_2026, "consulta_gral")) {
+        indicadores_consulta <- c(indicadores_consulta, "consulta_gral")
+        etiquetas_consulta <- c(etiquetas_consulta, "Consultas generales")
       }
 
-      if (hay_indicador_2026(datos_2024_2026, "egresos")) {
-        indicadores_proc <- c(indicadores_proc, "egresos")
-        etiquetas_proc <- c(etiquetas_proc, "Egresos")
+      if (hay_indicador_2026(datos_2024_2026, "consulta_esp")) {
+        indicadores_consulta <- c(indicadores_consulta, "consulta_esp")
+        etiquetas_consulta <- c(etiquetas_consulta, "Consultas de especialidad*")
       }
 
-      tabla_proc <- armar_tabla_dinamica(
+      tabla_consultas <- armar_tabla_dinamica(
         df = datos_2024_2026,
-        indicadores = indicadores_proc,
-        etiquetas = etiquetas_proc,
+        indicadores = indicadores_consulta,
+        etiquetas = etiquetas_consulta,
         mes_nombre = "Acumulado"
       )
 
-      ft_consultas <- ft_planeacion(
-        tabla_consultas,
-        w1 = 2.70,
-        w2 = 0.90,
-        w3 = 0.90,
-        w4 = 0.80,
-        size_header = 8,
-        size_body = 7.5,
-        h_fila = 0.28
-      )
+      if (hay_qx_2024_2026) {
 
-      ft_proc <- ft_planeacion(
-        tabla_proc,
-        w1 = 2.70,
-        w2 = 0.90,
-        w3 = 0.90,
-        w4 = 0.80,
-        size_header = 8,
-        size_body = 7.5,
-        h_fila = 0.28
-      )
-
-      pptx <- pptx %>%
-        officer::add_slide(
-          layout = "Historico consultas y procedimientos",
-          master = "Tema de Office"
-        ) %>%
-        officer::ph_with(
-          "Productividad IMSS Bienestar",
-          officer::ph_location_label("Título 1")
-        ) %>%
-        officer::ph_with(
-          value = rvg::dml(ggobj = grafica_consultas_2024_2026),
-          location = officer::ph_location_label("Grafica 1")
-        ) %>%
-        officer::ph_with(
-          value = rvg::dml(ggobj = grafica_qx_2024_2026),
-          location = officer::ph_location_label("Grafica 2")
-        ) %>%
-        officer::ph_with(
-          value = ft_consultas,
-          location = officer::ph_location_label("tabla_1"),
-          use_loc_size = TRUE
-        ) %>%
-        officer::ph_with(
-          value = ft_proc,
-          location = officer::ph_location_label("tabla_2"),
-          use_loc_size = TRUE
-        ) %>%
-        officer::ph_with(
-          value = paste0("Del 01 de enero al ", fecha_portada),
-          location = officer::ph_location_label("fecha"),
-          use_loc_size = TRUE
+        grafica_qx_2024_2026 <- grafica_planeacion_2024_2026(
+          df = datos_2024_2026,
+          col_total = "qx_meta",
+          col_avance = "qx",
+          titulo = "Procedimientos quirúrgicos"
         )
 
-    } else {
+        indicadores_proc <- c()
+        etiquetas_proc <- c()
 
-      ft_consultas <- ft_planeacion(
-        tabla_consultas,
-        w1 = 4.60,
-        w2 = 1.35,
-        w3 = 1.35,
-        w4 = 1.40,
-        size_header = 11,
-        size_body = 10,
-        h_fila = 0.38
-      )
+        if (hay_indicador_2026(datos_2024_2026, "qx")) {
+          indicadores_proc <- c(indicadores_proc, "qx")
+          etiquetas_proc <- c(etiquetas_proc, "Procedimientos quirúrgicos")
+        }
 
-      pptx <- pptx %>%
-        officer::add_slide(
-          layout = "Historico consultas",
-          master = "Tema de Office"
-        ) %>%
-        officer::ph_with(
-          "Productividad IMSS Bienestar",
-          officer::ph_location_label("Título 1")
-        ) %>%
-        officer::ph_with(
-          value = rvg::dml(ggobj = grafica_consultas_2024_2026),
-          location = officer::ph_location_label("Grafica 1")
-        ) %>%
-        officer::ph_with(
-          value = ft_consultas,
-          location = officer::ph_location_label("tabla_1"),
-          use_loc_size = TRUE
-        ) %>%
-        officer::ph_with(
-          value = paste0("Del 01 de enero al ", fecha_portada),
-          location = officer::ph_location_label("fecha"),
-          use_loc_size = TRUE
+        if (hay_indicador_2026(datos_2024_2026, "egresos")) {
+          indicadores_proc <- c(indicadores_proc, "egresos")
+          etiquetas_proc <- c(etiquetas_proc, "Egresos")
+        }
+
+        tabla_proc <- armar_tabla_dinamica(
+          df = datos_2024_2026,
+          indicadores = indicadores_proc,
+          etiquetas = etiquetas_proc,
+          mes_nombre = "Acumulado"
         )
+
+        ft_consultas <- ft_planeacion(
+          tabla_consultas,
+          w1 = 2.70,
+          w2 = 0.90,
+          w3 = 0.90,
+          w4 = 0.80,
+          size_header = 8,
+          size_body = 7.5,
+          h_fila = 0.28
+        )
+
+        ft_proc <- ft_planeacion(
+          tabla_proc,
+          w1 = 2.70,
+          w2 = 0.90,
+          w3 = 0.90,
+          w4 = 0.80,
+          size_header = 8,
+          size_body = 7.5,
+          h_fila = 0.28
+        )
+
+        pptx <- pptx %>%
+          officer::add_slide(
+            layout = "Historico consultas y procedimientos",
+            master = "Tema de Office"
+          ) %>%
+          officer::ph_with(
+            "Productividad IMSS Bienestar",
+            officer::ph_location_label("Título 1")
+          ) %>%
+          officer::ph_with(
+            value = rvg::dml(ggobj = grafica_consultas_2024_2026),
+            location = officer::ph_location_label("Grafica 1")
+          ) %>%
+          officer::ph_with(
+            value = rvg::dml(ggobj = grafica_qx_2024_2026),
+            location = officer::ph_location_label("Grafica 2")
+          ) %>%
+          officer::ph_with(
+            value = ft_consultas,
+            location = officer::ph_location_label("tabla_1"),
+            use_loc_size = TRUE
+          ) %>%
+          officer::ph_with(
+            value = ft_proc,
+            location = officer::ph_location_label("tabla_2"),
+            use_loc_size = TRUE
+          ) %>%
+          officer::ph_with(
+            value = paste0("Del 01 de enero al ", fecha_portada),
+            location = officer::ph_location_label("fecha"),
+            use_loc_size = TRUE
+          )
+
+      } else {
+
+        ft_consultas <- ft_planeacion(
+          tabla_consultas,
+          w1 = 4.60,
+          w2 = 1.35,
+          w3 = 1.35,
+          w4 = 1.40,
+          size_header = 11,
+          size_body = 10,
+          h_fila = 0.38
+        )
+
+        pptx <- pptx %>%
+          officer::add_slide(
+            layout = "Historico consultas",
+            master = "Tema de Office"
+          ) %>%
+          officer::ph_with(
+            "Productividad IMSS Bienestar",
+            officer::ph_location_label("Título 1")
+          ) %>%
+          officer::ph_with(
+            value = rvg::dml(ggobj = grafica_consultas_2024_2026),
+            location = officer::ph_location_label("Grafica 1")
+          ) %>%
+          officer::ph_with(
+            value = ft_consultas,
+            location = officer::ph_location_label("tabla_1"),
+            use_loc_size = TRUE
+          ) %>%
+          officer::ph_with(
+            value = paste0("Del 01 de enero al ", fecha_portada),
+            location = officer::ph_location_label("fecha"),
+            use_loc_size = TRUE
+          )
+      }
     }
+
+  } else {
+    message("Sin datos 2026: se imprimen valueboxes en cero y se omite diapo 4.")
   }
+
   # Diapo 5 ----------------------------------------------------------------
   serie_mensual_consultas <- historicos %>%
     dplyr::mutate(
-      fecha = lubridate::floor_date(fecha, "month")
+      fecha = clock::date_build(
+        year = clock::get_year(fecha),
+        month = clock::get_month(fecha),
+        day = 1
+      )
     ) %>%
-
     dplyr::filter(
       !is.na(fecha),
       !is.na(consulta_total)
     ) %>%
-
     dplyr::group_by(fecha) %>%
-
     dplyr::summarise(
       consultas_totales = sum(consulta_total, na.rm = TRUE),
       .groups = "drop"
     ) %>%
-
     dplyr::arrange(fecha)
 
-  g_periodos_consulta <- grafica_consultas_periodos(
-    serie_mensual_consultas,
-    fecha_inicio = "2022-08-01",
-    fecha_fin = as.character(fecha_fin_graf),
-    titulo = paste0(
-      "Consultas totales del IMSS Bienestar (agosto 2022 – ",
-      tolower(format(fecha_fin_graf, "%B %Y")), ")"
-    )
-  )
+  if (nrow(serie_mensual_consultas) > 0) {
 
-  pptx <- pptx %>%
-    officer::add_slide(layout = "Una grafica", master = "Tema de Office") %>%
-    officer::ph_with("Consultas totales por mes (2022-2026)", officer::ph_location_label("Título 1")) %>%
-    officer::ph_with(
-      value = rvg::dml(ggobj = g_periodos_consulta),
-      location = officer::ph_location_label("ft")
+    g_periodos_consulta <- grafica_consultas_periodos(
+      serie_mensual_consultas,
+      fecha_inicio = "2022-08-01",
+      fecha_fin = as.character(fecha_fin_graf),
+      titulo = paste0(
+        "Consultas totales del IMSS Bienestar (agosto 2022 – ",
+        tolower(
+          clock::date_format(
+            fecha_fin_graf,
+            format = "%B %Y",
+            locale = clock::clock_locale("es")
+          )
+        ),
+        ")"
+      )
     )
+
+    pptx <- pptx %>%
+      officer::add_slide(layout = "Una grafica", master = "Tema de Office") %>%
+      officer::ph_with(
+        "Consultas totales por mes (2022-2026)",
+        officer::ph_location_label("Título 1")
+      ) %>%
+      officer::ph_with(
+        value = rvg::dml(ggobj = g_periodos_consulta),
+        location = officer::ph_location_label("ft")
+      )
+  }
 
   # Diapo 6 ----------------------------------------------------------------
-  # Diapo 6 ----------------------------------------------------------------
-  if (hay_indicador_2026(datos_consulta_funcion, "qx")) {
+  if (hay_fila_2026 && hay_indicador_2026(datos_consulta_funcion, "qx")) {
 
     serie_mensual_pq <- historicos %>%
-      dplyr::mutate(fecha = lubridate::floor_date(fecha, "month")) %>%
+      dplyr::mutate(
+        fecha = clock::date_build(
+          year = clock::get_year(fecha),
+          month = clock::get_month(fecha),
+          day = 1
+        )
+      ) %>%
       dplyr::filter(
         !is.na(fecha),
-        !is.na(consulta_total)
+        !is.na(procedimientos_qx)
       ) %>%
       dplyr::group_by(fecha) %>%
       dplyr::summarise(
@@ -1596,39 +1616,38 @@ crear_reporte_productividad <- function(
       ) %>%
       dplyr::arrange(fecha)
 
-    g_periodos_pq <- grafica_consultas_periodos(
-      serie_mensual_pq,
-      fecha_inicio = "2022-08-01",
-      fecha_fin = as.character(fecha_fin_graf),
-      titulo = paste0(
-        "Procedimientos quirúrgicos del IMSS Bienestar (agosto 2022 – ",
-        tolower(format(fecha_fin_graf, "%B %Y")), ")"
-      )
-    )
+    if (nrow(serie_mensual_pq) > 0) {
 
-    pptx <- pptx %>%
-      officer::add_slide(layout = "Una grafica", master = "Tema de Office") %>%
-      officer::ph_with("Procedimientos quirúrgicos por mes (2022-2026)", officer::ph_location_label("Título 1")) %>%
-      officer::ph_with(
-        value = rvg::dml(ggobj = g_periodos_pq),
-        location = officer::ph_location_label("ft")
+      g_periodos_pq <- grafica_consultas_periodos(
+        serie_mensual_pq,
+        fecha_inicio = "2022-08-01",
+        fecha_fin = as.character(fecha_fin_graf),
+        titulo = paste0(
+          "Procedimientos quirúrgicos del IMSS Bienestar (agosto 2022 – ",
+          tolower(
+            clock::date_format(
+              fecha_fin_graf,
+              format = "%B %Y",
+              locale = clock::clock_locale("es")
+            )
+          ),
+          ")"
+        )
       )
+
+      pptx <- pptx %>%
+        officer::add_slide(layout = "Una grafica", master = "Tema de Office") %>%
+        officer::ph_with(
+          "Procedimientos quirúrgicos por mes (2022-2026)",
+          officer::ph_location_label("Título 1")
+        ) %>%
+        officer::ph_with(
+          value = rvg::dml(ggobj = g_periodos_pq),
+          location = officer::ph_location_label("ft")
+        )
+    }
   }
 
-  # Guardar ----------------------------------------------------------------
-  # print(pptx, target = output)
-
-  # invisible(
-  #   list(
-  #     # output = output,
-  #     datos_consulta_funcion = datos_consulta_funcion,
-  #     datos_curps = datos_curps,
-  #     clues_info_filtrado = clues_info_filtrado,
-  #     metas_filtrado = metas_filtrado,
-  #     historicos = historicos,
-  #     procedimientos_personas = procedimientos_personas
-  #   )
-  # )
   return(pptx)
 }
 
