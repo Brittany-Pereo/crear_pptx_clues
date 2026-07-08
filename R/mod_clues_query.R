@@ -301,7 +301,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
 
             print(val_personas$datos)
             str(val_personas$datos)
-            View(as.data.frame(val_personas$datos))
+            #View(as.data.frame(val_personas$datos))
 
             cat("✅ Consulta exitosa. Registros obtenidos:",
                 nrow(resultados), "\n")
