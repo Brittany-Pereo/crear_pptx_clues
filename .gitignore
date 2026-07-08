@@ -20,3 +20,8 @@ rsconnect/
 # Archivos propios de golem
 dev/
 inst/app/www/
+
+# Migración a Python
+__pycache__/
+*.pyc
+.streamlit/

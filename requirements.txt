@@ -1,0 +1,8 @@
+streamlit==1.58.0
+duckdb==1.5.4
+pandas==2.3.1
+pyarrow==21.0.0
+matplotlib==3.10.5
+python-pptx==1.0.2
+openpyxl==3.1.5
+numpy==2.2.6
