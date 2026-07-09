@@ -7,6 +7,9 @@
 #' @noRd
 #'
 #' @importFrom shiny NS tagList
+#'
+#' @importFrom magrittr %>%
+
 mod_crear_pptx_ui <- function(id) {
   ns <- NS(id)
   tagList(

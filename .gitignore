@@ -5,6 +5,7 @@
 .Rhistory
 .RData
 .Ruserdata
+.RDataTmp
 
 # Dependencias y archivos de paquetes
 renv/library/
