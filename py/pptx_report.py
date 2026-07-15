@@ -1,23 +1,17 @@
 """Generador del reporte PPTX de productividad (porta R/utils_crear_pptx.R)."""
 
-import io
+import math
 
 import numpy as np
 import pandas as pd
 from pptx import Presentation
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
 
-from py.charts import (
-    fecha_larga_es,
-    grafica_consultas_periodos,
-    grafica_planeacion_2024_2026,
-    grafica_planeacion_historica,
-    mes_anio_es,
-)
+from py.charts import fecha_larga_es, mes_anio_es
 from py.utils_comunes import calcular_fecha_corte
 
 # ---------------------------------------------------------------------------
@@ -105,20 +99,17 @@ def set_placeholder_text(layout, slide, name: str, text: str):
     run.text = str(text)
 
 
-def place_picture(slide, layout, name: str, fig, dpi: int = 200):
+def place_native_chart(slide, layout, name: str, funcion_dibujo, *args, **kwargs):
+    """Resuelve el placeholder `name` y llama a
+    `funcion_dibujo(slide, box, *args, **kwargs)` para dibujar formas nativas
+    (editables en PowerPoint) dentro de su geometría, en vez de pegar una
+    imagen (como hacía la vieja place_picture)."""
     ph = find_placeholder(layout, slide, name)
     if ph is None:
         return
-    left, top, width, height = _bbox(ph)
+    box = _bbox(ph)
     _remove(ph)
-
-    import matplotlib.pyplot as plt
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=dpi)
-    plt.close(fig)
-    buf.seek(0)
-    slide.shapes.add_picture(buf, left, top, width, height)
+    funcion_dibujo(slide, box, *args, **kwargs)
 
 
 def _set_cell_border(cell, color: str = COL_MUTED, width_pt: float = 1.0):
@@ -195,6 +186,406 @@ def place_table(
             table.columns[j].width = Emu(int(width * (width_in / total_in)))
 
     return table
+
+
+# ---------------------------------------------------------------------------
+# Formas nativas de bajo nivel para gráficas (editables en PowerPoint)
+# ---------------------------------------------------------------------------
+MESES_EN_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _forma_rect(slide, left, top, width, height, color_hex, transparencia_pct=0):
+    """Rectángulo nativo relleno. `transparencia_pct`: 0 (opaco) a 100 (invisible)."""
+    shp = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, int(left), int(top), int(max(width, 1)), int(max(height, 1)))
+    shp.fill.solid()
+    shp.fill.fore_color.rgb = _rgb(color_hex)
+    if transparencia_pct:
+        srgb = shp.fill._xPr.find(qn("a:solidFill")).find(qn("a:srgbClr"))
+        alpha = srgb.makeelement(qn("a:alpha"), {"val": str(int((100 - transparencia_pct) * 1000))})
+        srgb.append(alpha)
+    shp.line.fill.background()
+    shp.shadow.inherit = False
+    return shp
+
+
+def _forma_texto(slide, left, top, width, height, texto, size=9, color_hex=COL_TEXTO,
+                 bold=False, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE,
+                 rotation=0, wrap=True):
+    tb = slide.shapes.add_textbox(int(left), int(top), int(max(width, 1)), int(max(height, 1)))
+    tf = tb.text_frame
+    tf.word_wrap = wrap
+    tf.vertical_anchor = anchor
+    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+    for i, linea in enumerate(str(texto).split("\n")):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.alignment = align
+        r = p.add_run()
+        r.text = linea
+        r.font.size = Pt(size)
+        r.font.bold = bold
+        r.font.color.rgb = _rgb(color_hex)
+        r.font.name = "Calibri"
+    if rotation:
+        tb.rotation = rotation
+    return tb
+
+
+def _forma_ovalo(slide, cx, cy, radio, color_hex):
+    shp = slide.shapes.add_shape(
+        MSO_SHAPE.OVAL, int(cx - radio), int(cy - radio), int(radio * 2), int(radio * 2))
+    shp.fill.solid()
+    shp.fill.fore_color.rgb = _rgb(color_hex)
+    shp.line.fill.background()
+    shp.shadow.inherit = False
+    return shp
+
+
+def _forma_linea_quebrada(slide, puntos, color_hex, width_pt=1.5):
+    """Línea poligonal nativa y editable (freeform) que conecta `puntos`
+    (lista de (x_emu, y_emu)) — a diferencia de una imagen, en PowerPoint se
+    puede mover cada punto con doble clic."""
+    if len(puntos) < 2:
+        return None
+    fb = slide.shapes.build_freeform(int(puntos[0][0]), int(puntos[0][1]), scale=1.0)
+    fb.add_line_segments([(int(x), int(y)) for x, y in puntos[1:]], close=False)
+    shp = fb.convert_to_shape()
+    shp.fill.background()
+    shp.line.color.rgb = _rgb(color_hex)
+    shp.line.width = Pt(width_pt)
+    shp.shadow.inherit = False
+    return shp
+
+
+def _forma_flecha_vertical(slide, x, y_top, y_bottom, color_hex, width_pt=1.2):
+    """Conector vertical con punta de flecha arriba (en `y_top`)."""
+    conn = slide.shapes.add_connector(
+        MSO_CONNECTOR.STRAIGHT, int(x), int(y_top), int(x), int(y_bottom))
+    conn.line.color.rgb = _rgb(color_hex)
+    conn.line.width = Pt(width_pt)
+    ln = conn.line._get_or_add_ln()
+    head = ln.makeelement(qn("a:headEnd"), {"type": "triangle", "w": "med", "len": "med"})
+    ln.append(head)
+    return conn
+
+
+def _escala_bonita(valor_max, n_pasos_objetivo=5):
+    """Devuelve (paso, valor_redondeado) con incrementos 'bonitos' (1/2/2.5/5/10 x 10^n),
+    para que el eje Y muestre números redondos (12,000,000) en vez de un valor
+    arbitrario (11,776,152)."""
+    if valor_max <= 0:
+        return 1, n_pasos_objetivo
+    bruto = valor_max / n_pasos_objetivo
+    exponente = math.floor(math.log10(bruto))
+    base = 10 ** exponente
+    paso = base * 10
+    for m in (1, 2, 2.5, 5, 10):
+        if bruto <= m * base:
+            paso = m * base
+            break
+    return paso, math.ceil(valor_max / paso) * paso
+
+
+def _dibujar_eje_y(slide, plot_l, plot_w, baseline, plot_h, ymax_eje, valores_marca,
+                   ancho_etiqueta=None, gridlines=False):
+    """Dibuja las marcas del eje Y (texto, en `valores_marca`) y opcionalmente
+    líneas de rejilla, mapeadas proporcionalmente contra `ymax_eje`."""
+    ancho_etiqueta = ancho_etiqueta or Emu(900000)
+    for valor in valores_marca:
+        frac = (valor / ymax_eje) if ymax_eje else 0
+        y = baseline - frac * plot_h
+        _forma_texto(
+            slide, plot_l - ancho_etiqueta - Pt(4), y - Pt(7), ancho_etiqueta, Pt(14),
+            fmt_num(valor), size=8, color_hex=COL_MUTED, align=PP_ALIGN.RIGHT,
+            anchor=MSO_ANCHOR.MIDDLE, wrap=False)
+        if gridlines and valor > 0:
+            _forma_rect(slide, plot_l, y, plot_w, Pt(0.6), "E5E7EB")
+
+
+# ---------------------------------------------------------------------------
+# Gráficas de barras (histórico 2020-2025 y 2024-2026) — formas nativas
+# ---------------------------------------------------------------------------
+def dibujar_grafica_barras(slide, box, categorias, totales, avances, titulo,
+                           colores_total, colores_avance,
+                           etiquetas_total=None, etiquetas_avance=None,
+                           title_size=15):
+    """Barras de 'total' (claro) con 'avance' superpuesto (oscuro), con
+    etiquetas de valor — equivalente nativo de grafica_planeacion_*."""
+    L, T, W, H = box
+    n = len(categorias)
+    if n == 0:
+        return
+
+    if etiquetas_total is None:
+        etiquetas_total = [fmt_num(t) for t in totales]
+    if etiquetas_avance is None:
+        etiquetas_avance = [fmt_num(a) for a in avances]
+
+    alto_titulo = int(H * 0.13)
+    alto_categoria = Pt(16)
+    margen_izq = int(W * 0.12)
+    espacio_etiqueta_sup = int(H * 0.16)
+
+    _forma_texto(slide, L, T, W, alto_titulo, titulo, size=title_size,
+                color_hex=COL_MUTED, bold=True, align=PP_ALIGN.CENTER)
+
+    plot_l = L + margen_izq
+    plot_t = T + alto_titulo + espacio_etiqueta_sup
+    plot_w = W - margen_izq
+    plot_h = H - alto_titulo - espacio_etiqueta_sup - alto_categoria
+    baseline = plot_t + plot_h
+
+    ymax_datos = max(max(totales, default=0), max(avances, default=0), 1)
+    paso, ymax_redondeado = _escala_bonita(ymax_datos, 5)
+    ymax_eje = max(ymax_redondeado, ymax_datos) * 1.16
+
+    valores_marca = [i * paso for i in range(int(ymax_eje // paso) + 1)]
+    _dibujar_eje_y(slide, plot_l, plot_w, baseline, plot_h, ymax_eje, valores_marca,
+                  ancho_etiqueta=margen_izq - Pt(4))
+
+    slot_w = plot_w / n
+    bar_w = slot_w * 0.60
+
+    for i, cat in enumerate(categorias):
+        slot_l = plot_l + i * slot_w
+        bar_l = slot_l + (slot_w - bar_w) / 2
+
+        h_total = (totales[i] / ymax_eje) * plot_h if ymax_eje else 0
+        h_avance = (avances[i] / ymax_eje) * plot_h if ymax_eje else 0
+
+        if h_total > 0:
+            _forma_rect(slide, bar_l, baseline - h_total, bar_w, h_total, colores_total[i])
+        if h_avance > 0:
+            _forma_rect(slide, bar_l, baseline - h_avance, bar_w, h_avance, colores_avance[i])
+
+        n_lineas_tot = etiquetas_total[i].count("\n") + 1
+        alto_et = Pt(13) * n_lineas_tot
+        _forma_texto(slide, slot_l, baseline - h_total - alto_et - Pt(3), slot_w, alto_et,
+                    etiquetas_total[i], size=9.5, color_hex="000000", bold=True,
+                    align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.BOTTOM)
+
+        if h_avance > Pt(24):
+            n_lineas_av = etiquetas_avance[i].count("\n") + 1
+            alto_ea = Pt(12) * n_lineas_av
+            _forma_texto(slide, slot_l, baseline - h_avance + Pt(3), slot_w, alto_ea,
+                        etiquetas_avance[i], size=8.5, color_hex="FFFFFF", bold=True,
+                        align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.TOP)
+
+        _forma_texto(slide, slot_l, baseline + Pt(3), slot_w, alto_categoria,
+                    str(cat), size=11, color_hex=COL_MUTED, bold=True, align=PP_ALIGN.CENTER)
+
+
+def dibujar_grafica_planeacion_historica(slide, box, df, col_total, col_avance, titulo,
+                                         beige="D9D2BE", verde="2F6F63"):
+    """Barras 2020-2025: total (beige) con avance (verde) superpuesto."""
+    anios = list(range(2020, 2026))
+    d = df.copy()
+    d["anio_num"] = d["anio"].astype(int)
+    d = d[d["anio_num"].isin(anios)].set_index("anio_num").reindex(anios)
+    totales = d[col_total].fillna(0).astype(float).tolist()
+    avances = d[col_avance].fillna(0).astype(float).tolist()
+
+    dibujar_grafica_barras(
+        slide, box, categorias=[str(a) for a in anios],
+        totales=totales, avances=avances, titulo=titulo,
+        colores_total=[beige] * len(anios), colores_avance=[verde] * len(anios),
+    )
+
+
+def dibujar_grafica_planeacion_2024_2026(slide, box, df, col_total, col_avance, titulo,
+                                         beige="D9D2BE", verde="2F6F63",
+                                         beige_2026="A99F86", verde_2026="1E5B4F"):
+    """Barras 2024-2026 con etiquetas especiales de 'Meta 2026' / 'Avance'."""
+    anios = [2024, 2025, 2026]
+    d = df.copy()
+    d["anio_num"] = d["anio"].astype(int)
+    d = d[d["anio_num"].isin(anios)].set_index("anio_num").reindex(anios)
+    totales = d[col_total].fillna(0).astype(float).tolist()
+    avances = d[col_avance].fillna(0).astype(float).tolist()
+
+    etiquetas_total, etiquetas_avance = [], []
+    for a, tot, av in zip(anios, totales, avances):
+        if a == 2026:
+            etiquetas_total.append(f"Meta 2026\n{fmt_num(tot)}")
+            pct = (av / tot) if tot > 0 else np.nan
+            pct_txt = "s/d" if pd.isna(pct) else f"{int(round(pct * 100))}%"
+            etiquetas_avance.append(f"Avance\n{fmt_num(av)}\n({pct_txt})")
+        else:
+            etiquetas_total.append(fmt_num(tot))
+            etiquetas_avance.append(fmt_num(av))
+
+    colores_total = [beige_2026 if a == 2026 else beige for a in anios]
+    colores_avance = [verde_2026 if a == 2026 else verde for a in anios]
+
+    dibujar_grafica_barras(
+        slide, box, categorias=[str(a) for a in anios],
+        totales=totales, avances=avances, titulo=titulo,
+        colores_total=colores_total, colores_avance=colores_avance,
+        etiquetas_total=etiquetas_total, etiquetas_avance=etiquetas_avance,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gráfica de serie temporal (consultas/procedimientos por mes) — formas nativas
+# ---------------------------------------------------------------------------
+def dibujar_grafica_consultas_periodos(slide, box, df, fecha_inicio="2022-08-01", fecha_fin=None,
+                                       titulo="Consultas totales del IMSS Bienestar",
+                                       color_linea="6B6B6B", verde_punto="1F5B50",
+                                       fill_2223="EFEFEF", fill_2024="E9DDCC",
+                                       fill_2025="F4F0EA", fill_2026="E9DDCC",
+                                       fill_valuebox="B99C6D"):
+    """Serie temporal mensual con bandas por periodo y anotaciones, dibujada
+    con formas nativas de PowerPoint (línea freeform editable, rectángulos,
+    óvalos y textos) en vez de una imagen."""
+    L, T, W, H = box
+    hoy = pd.Timestamp.today().normalize()
+    inicio_mes_actual = hoy.replace(day=1)
+    if fecha_fin is None:
+        fecha_fin = inicio_mes_actual
+    else:
+        fecha_fin = pd.Timestamp(fecha_fin)
+    fecha_inicio = pd.Timestamp(fecha_inicio)
+
+    d = df.copy()
+    d["fecha"] = pd.to_datetime(d["fecha"])
+    d = d[
+        (d["fecha"] >= fecha_inicio) & (d["fecha"] <= fecha_fin) & (d["fecha"] < inicio_mes_actual)
+    ].sort_values("fecha")
+
+    # Título (dentro del área del gráfico, arriba del todo)
+    alto_titulo = Pt(20)
+    _forma_texto(slide, L, T, W, alto_titulo, titulo, size=15, color_hex=COL_MUTED,
+                bold=True, align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.MIDDLE)
+
+    if d.empty:
+        _forma_texto(slide, L, T + alto_titulo, W, H - alto_titulo,
+                    "Sin datos suficientes para este período", size=12, color_hex=COL_MUTED)
+        return
+
+    ymax = float(d["consultas_totales"].max())
+    ymin = float(d["consultas_totales"].min())
+    ymax_eje = max(ymax * 1.48, 1)
+
+    fecha_fin_banda = (fecha_fin + pd.offsets.MonthBegin(1)).normalize()
+    bandas = [
+        (fecha_inicio, pd.Timestamp("2024-01-01"), fill_2223, "2022–2023\nAños de transición"),
+        (pd.Timestamp("2024-01-01"), pd.Timestamp("2025-01-01"), fill_2024, "2024\nPrimer año de operación"),
+        (pd.Timestamp("2025-01-01"), pd.Timestamp("2026-01-01"), fill_2025, "2025\nSegundo año de operación"),
+        (pd.Timestamp("2026-01-01"), fecha_fin_banda, fill_2026, "2026\nTercer año de operación"),
+    ]
+
+    dias_pad = max((fecha_fin_banda - fecha_inicio).days * 0.035, 10)
+    x0_ord = fecha_inicio.toordinal() - dias_pad
+    x1_ord = fecha_fin_banda.toordinal() + dias_pad
+
+    margen_izq = int(W * 0.075)
+    margen_der = int(W * 0.015)
+    margen_sup = alto_titulo + int(H * 0.05)
+    margen_inf = int(H * 0.17)
+
+    plot_l = L + margen_izq
+    plot_t = T + margen_sup
+    plot_w = W - margen_izq - margen_der
+    plot_h = H - margen_sup - margen_inf
+    baseline = plot_t + plot_h
+
+    def _ord(valor_fecha):
+        return pd.Timestamp(valor_fecha).toordinal()
+
+    def xmap(valor_fecha):
+        frac = (_ord(valor_fecha) - x0_ord) / (x1_ord - x0_ord)
+        return plot_l + frac * plot_w
+
+    def ymap(valor):
+        frac = (valor / ymax_eje) if ymax_eje else 0
+        return baseline - frac * plot_h
+
+    _forma_rect(slide, L, plot_t, W, plot_h, "FFFFFF")
+
+    for xmin_b, xmax_b, fill, _lab in bandas:
+        x_l, x_r = xmap(xmin_b), xmap(xmax_b)
+        _forma_rect(slide, x_l, plot_t, x_r - x_l, plot_h, fill)
+
+    _paso_eje, _ = _escala_bonita(ymax, 5)
+    valores_marca_y = [i * _paso_eje for i in range(int(ymax_eje // _paso_eje) + 1)]
+    _dibujar_eje_y(slide, plot_l, plot_w, baseline, plot_h, ymax_eje, valores_marca_y,
+                  ancho_etiqueta=margen_izq - Pt(4), gridlines=True)
+
+    ultimos_3 = d.tail(3)
+    if not ultimos_3.empty:
+        xmin_sub = ultimos_3["fecha"].min() - pd.Timedelta(days=15)
+        xmax_sub = ultimos_3["fecha"].max() + pd.Timedelta(days=15)
+        x_l, x_r = xmap(xmin_sub), xmap(xmax_sub)
+        _forma_rect(slide, x_l, plot_t, x_r - x_l, plot_h, "B22222", transparencia_pct=82)
+        _forma_texto(
+            slide, xmap(d["fecha"].max()) - Pt(70), ymap(ymax * 1.08), Pt(140), Pt(26),
+            "Posible subregistro\ntemporal", size=8.5, color_hex="7A1E3A", bold=True,
+            align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.TOP)
+
+    puntos_linea = [(xmap(f), ymap(v)) for f, v in zip(d["fecha"], d["consultas_totales"])]
+    _forma_linea_quebrada(slide, puntos_linea, color_linea, width_pt=1.3)
+    for x, y in puntos_linea:
+        _forma_ovalo(slide, x, y, Pt(1.6), color_linea)
+
+    mes_destacado = fecha_fin.month
+    puntos_destacados = d[(d["fecha"].dt.month == mes_destacado) & (d["fecha"].dt.year < 2026)]
+    for _, fila in puntos_destacados.iterrows():
+        x, y = xmap(fila["fecha"]), ymap(fila["consultas_totales"])
+        _forma_ovalo(slide, x, y, Pt(4.5), verde_punto)
+        etiqueta = f"{fmt_num(fila['consultas_totales'])}\n{fila['fecha'].strftime('%b-%Y').title()}"
+        _forma_texto(slide, x - Pt(45), y - Pt(38), Pt(90), Pt(30), etiqueta,
+                    size=8, color_hex="000000", bold=True,
+                    align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.BOTTOM)
+
+    for xmin_b, xmax_b, _fill, lab in bandas:
+        centro = xmap(xmin_b) + (xmap(xmax_b) - xmap(xmin_b)) / 2
+        _forma_texto(slide, centro - Pt(70), ymap(ymax * 1.32), Pt(140), Pt(26), lab,
+                    size=8, color_hex="000000", bold=True,
+                    align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.TOP)
+
+    x_decreto = xmap(pd.Timestamp("2022-08-15"))
+    _forma_flecha_vertical(slide, x_decreto, ymap(ymax * 1.02), ymap(ymin * 0.95), verde_punto)
+    _forma_texto(slide, x_decreto + Pt(6), ymap(ymax * 1.05) - Pt(4), Pt(120), Pt(26),
+                "Decreto de creación\ndel IMSS Bienestar", size=7.5, color_hex="000000",
+                bold=True, align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP)
+
+    fecha_ultimo_valor = d["fecha"].max()
+    valor_ultimo = d.loc[d["fecha"] == fecha_ultimo_valor, "consultas_totales"].iloc[0]
+    x_vb, y_vb = xmap(fecha_ultimo_valor), ymap(valor_ultimo)
+    vb_w, vb_h = Pt(72), Pt(30)
+    vb = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE, int(x_vb - vb_w / 2), int(y_vb - vb_h - Pt(10)),
+        int(vb_w), int(vb_h))
+    vb.fill.solid()
+    vb.fill.fore_color.rgb = _rgb(fill_valuebox)
+    vb.line.fill.background()
+    vb.shadow.inherit = False
+    tf = vb.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+    lineas_valuebox = [fmt_num(valor_ultimo), fecha_ultimo_valor.strftime("%b %Y").title()]
+    for i, linea in enumerate(lineas_valuebox):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run()
+        r.text = linea
+        r.font.size = Pt(9.5)
+        r.font.bold = True
+        r.font.color.rgb = _rgb("FFFFFF")
+        r.font.name = "Calibri"
+
+    eje_inicio = fecha_inicio.replace(day=1) - pd.DateOffset(months=2)
+    eje_fin = fecha_fin_banda + pd.DateOffset(months=2)
+    for tick in pd.date_range(eje_inicio, eje_fin, freq="2MS"):
+        x = xmap(tick)
+        if x < plot_l - Pt(5) or x > plot_l + plot_w + Pt(5):
+            continue
+        etiqueta = f"{MESES_EN_ABBR[tick.month - 1]}-{str(tick.year)[2:]}"
+        _forma_texto(slide, x - Pt(20), baseline + Pt(4), Pt(40), Pt(22), etiqueta,
+                    size=7.5, color_hex=COL_MUTED, bold=False, align=PP_ALIGN.CENTER,
+                    anchor=MSO_ANCHOR.TOP, rotation=45, wrap=False)
 
 
 # ---------------------------------------------------------------------------
@@ -605,10 +996,6 @@ def crear_reporte_productividad(
         hay_qx_2024_2026 = bool(((datos_2024_2026["qx"] > 0) | (datos_2024_2026["egresos"] > 0)).any())
 
         if hay_consultas_2024_2026:
-            grafica_consultas_2024_2026 = grafica_planeacion_2024_2026(
-                datos_2024_2026, "total_consultas_meta", "total_consultas", "Consultas totales",
-            )
-
             indicadores_consulta, etiquetas_consulta = [], []
             if hay_indicador_2026(datos_2024_2026, "consulta_gral"):
                 indicadores_consulta.append("consulta_gral")
@@ -620,10 +1007,6 @@ def crear_reporte_productividad(
             tabla_consultas = armar_tabla_dinamica(datos_2024_2026, indicadores_consulta, etiquetas_consulta, "Acumulado")
 
             if hay_qx_2024_2026:
-                grafica_qx_2024_2026 = grafica_planeacion_2024_2026(
-                    datos_2024_2026, "qx_meta", "qx", "Procedimientos quirúrgicos",
-                )
-
                 indicadores_proc, etiquetas_proc = [], []
                 if hay_indicador_2026(datos_2024_2026, "qx"):
                     indicadores_proc.append("qx")
@@ -636,15 +1019,18 @@ def crear_reporte_productividad(
 
                 slide, layout = add_slide(prs, master, "Historico consultas y procedimientos")
                 set_placeholder_text(layout, slide, "Título 1", "Productividad IMSS Bienestar")
-                place_picture(slide, layout, "Grafica 1", grafica_consultas_2024_2026)
-                place_picture(slide, layout, "Grafica 2", grafica_qx_2024_2026)
+                place_native_chart(slide, layout, "Grafica 1", dibujar_grafica_planeacion_2024_2026,
+                                   datos_2024_2026, "total_consultas_meta", "total_consultas", "Consultas totales")
+                place_native_chart(slide, layout, "Grafica 2", dibujar_grafica_planeacion_2024_2026,
+                                   datos_2024_2026, "qx_meta", "qx", "Procedimientos quirúrgicos")
                 place_table(slide, layout, "tabla_1", tabla_consultas, w=[2.70, 0.90, 0.90, 0.80], size_header=8, size_body=8)
                 place_table(slide, layout, "tabla_2", tabla_proc, w=[2.70, 0.90, 0.90, 0.80], size_header=8, size_body=8)
                 set_placeholder_text(layout, slide, "fecha", f"Del 01 de enero al {fecha_portada}")
             else:
                 slide, layout = add_slide(prs, master, "Historico consultas")
                 set_placeholder_text(layout, slide, "Título 1", "Productividad IMSS Bienestar")
-                place_picture(slide, layout, "Grafica 1", grafica_consultas_2024_2026)
+                place_native_chart(slide, layout, "Grafica 1", dibujar_grafica_planeacion_2024_2026,
+                                   datos_2024_2026, "total_consultas_meta", "total_consultas", "Consultas totales")
                 place_table(slide, layout, "tabla_1", tabla_consultas, w=[4.60, 1.35, 1.35, 1.40], size_header=11, size_body=10)
                 set_placeholder_text(layout, slide, "fecha", f"Del 01 de enero al {fecha_portada}")
 
@@ -699,23 +1085,21 @@ def crear_reporte_productividad(
     )
 
     if hay_consultas_2020:
-        grafica_consultas_2020_2025 = grafica_planeacion_historica(
-            datos_historicos_2020_2025, "total_consultas_anual", "total_consultas", "Consultas totales",
-        )
-
         if hay_qx_2020:
-            grafica_qx_2020_2025 = grafica_planeacion_historica(
-                datos_historicos_2020_2025, "qx_anual", "qx", "Procedimientos quirúrgicos",
-            )
             slide, layout = add_slide(prs, master, "1_Historico consultas y procedimientos")
             set_placeholder_text(layout, slide, "Título 1", "Productividad IMSS Bienestar")
-            place_picture(slide, layout, "Grafica 1", grafica_consultas_2020_2025)
-            place_picture(slide, layout, "Grafica 2", grafica_qx_2020_2025)
+            place_native_chart(slide, layout, "Grafica 1", dibujar_grafica_planeacion_historica,
+                               datos_historicos_2020_2025, "total_consultas_anual", "total_consultas",
+                               "Consultas totales")
+            place_native_chart(slide, layout, "Grafica 2", dibujar_grafica_planeacion_historica,
+                               datos_historicos_2020_2025, "qx_anual", "qx", "Procedimientos quirúrgicos")
             set_placeholder_text(layout, slide, "fecha", f"Del 01 de enero al {fecha_portada}")
         else:
             slide, layout = add_slide(prs, master, "1_Historico consultas")
             set_placeholder_text(layout, slide, "Título 1", "Productividad IMSS Bienestar")
-            place_picture(slide, layout, "Grafica 1", grafica_consultas_2020_2025)
+            place_native_chart(slide, layout, "Grafica 1", dibujar_grafica_planeacion_historica,
+                               datos_historicos_2020_2025, "total_consultas_anual", "total_consultas",
+                               "Consultas totales")
             set_placeholder_text(layout, slide, "fecha", f"Del 01 de enero al {fecha_portada}")
 
     # Diapo 5 ------------------------------------------------------------
@@ -730,15 +1114,13 @@ def crear_reporte_productividad(
     )
 
     if len(serie_mensual_consultas) > 0:
-        g_periodos_consulta = grafica_consultas_periodos(
-            serie_mensual_consultas,
-            fecha_inicio="2022-08-01",
-            fecha_fin=str(fecha_fin_graf.date()),
-            titulo=f"Consultas totales del IMSS Bienestar (agosto 2022 – {mes_anio_es(fecha_fin_graf)})",
-        )
         slide, layout = add_slide(prs, master, "Una grafica")
         set_placeholder_text(layout, slide, "Título 1", "Consultas totales por mes (2022-2026)")
-        place_picture(slide, layout, "ft", g_periodos_consulta)
+        place_native_chart(
+            slide, layout, "ft", dibujar_grafica_consultas_periodos,
+            serie_mensual_consultas, fecha_inicio="2022-08-01", fecha_fin=str(fecha_fin_graf.date()),
+            titulo=f"Consultas totales del IMSS Bienestar (agosto 2022 – {mes_anio_es(fecha_fin_graf)})",
+        )
 
     # Diapo 6 ------------------------------------------------------------
     if hay_fila_2026 and hay_indicador_2026(datos_consulta_funcion, "qx"):
@@ -753,14 +1135,12 @@ def crear_reporte_productividad(
         )
 
         if len(serie_mensual_pq) > 0:
-            g_periodos_pq = grafica_consultas_periodos(
-                serie_mensual_pq,
-                fecha_inicio="2022-08-01",
-                fecha_fin=str(fecha_fin_graf.date()),
-                titulo=f"Procedimientos quirúrgicos del IMSS Bienestar (agosto 2022 – {mes_anio_es(fecha_fin_graf)})",
-            )
             slide, layout = add_slide(prs, master, "Una grafica")
             set_placeholder_text(layout, slide, "Título 1", "Procedimientos quirúrgicos por mes (2022-2026)")
-            place_picture(slide, layout, "ft", g_periodos_pq)
+            place_native_chart(
+                slide, layout, "ft", dibujar_grafica_consultas_periodos,
+                serie_mensual_pq, fecha_inicio="2022-08-01", fecha_fin=str(fecha_fin_graf.date()),
+                titulo=f"Procedimientos quirúrgicos del IMSS Bienestar (agosto 2022 – {mes_anio_es(fecha_fin_graf)})",
+            )
 
     return prs
