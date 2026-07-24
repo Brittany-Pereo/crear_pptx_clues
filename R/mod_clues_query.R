@@ -158,7 +158,7 @@ mod_clues_query_server <- function(id, con, clues_info) {
 
     # Obtener ruta al archivo Parquet
     parquet_path <- reactive({
-      path <- system.file("app", "data", "Cubos_completos_2020_2025.parquet",
+      path <- system.file("app", "data", "resumen_prod_2020_2025.parquet",
                           package = "pptx")
       if (path == "") {
         valores$error <- "No se encontró el archivo Parquet"

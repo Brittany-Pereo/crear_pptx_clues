@@ -8,7 +8,7 @@ import streamlit as st
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
-CUBOS_PARQUET = DATA_DIR / "Cubos_completos_2020_2025.parquet"
+CUBOS_PARQUET = DATA_DIR / "resumen_prod_2020_2025.parquet"
 PERSONAS_PARQUET = DATA_DIR / "procedimientos_personas.parquet"
 MASTER_PPTX = DATA_DIR / "master_presentacion.pptx"
 
