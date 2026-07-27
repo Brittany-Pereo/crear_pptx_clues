@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
@@ -193,6 +194,8 @@ def place_table(
 # ---------------------------------------------------------------------------
 MESES_EN_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+MESES_ES_ABBR = ["ene", "feb", "mar", "abr", "may", "jun",
+                  "jul", "ago", "sep", "oct", "nov", "dic"]
 
 
 def _forma_rect(slide, left, top, width, height, color_hex, transparencia_pct=0):
@@ -270,6 +273,17 @@ def _forma_flecha_vertical(slide, x, y_top, y_bottom, color_hex, width_pt=1.2):
     return conn
 
 
+def _forma_linea_punteada(slide, x1, y1, x2, y2, color_hex, width_pt=0.75):
+    """Conector recto punteado (equivalente a geom_segment(linetype='dotted')),
+    usado como línea guía entre un punto destacado y su etiqueta."""
+    conn = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, int(x1), int(y1), int(x2), int(y2))
+    conn.line.color.rgb = _rgb(color_hex)
+    conn.line.width = Pt(width_pt)
+    conn.line.dash_style = MSO_LINE_DASH_STYLE.ROUND_DOT
+    conn.shadow.inherit = False
+    return conn
+
+
 def _escala_bonita(valor_max, n_pasos_objetivo=5):
     """Devuelve (paso, valor_redondeado) con incrementos 'bonitos' (1/2/2.5/5/10 x 10^n),
     para que el eje Y muestre números redondos (12,000,000) en vez de un valor
@@ -288,18 +302,21 @@ def _escala_bonita(valor_max, n_pasos_objetivo=5):
 
 
 def _dibujar_eje_y(slide, plot_l, plot_w, baseline, plot_h, ymax_eje, valores_marca,
-                   ancho_etiqueta=None, gridlines=False):
+                   ancho_etiqueta=None, gridlines=False, size=8, ymin_eje=0):
     """Dibuja las marcas del eje Y (texto, en `valores_marca`) y opcionalmente
-    líneas de rejilla, mapeadas proporcionalmente contra `ymax_eje`."""
+    líneas de rejilla, mapeadas proporcionalmente contra el rango
+    [`ymin_eje`, `ymax_eje`]."""
     ancho_etiqueta = ancho_etiqueta or Emu(900000)
+    alto_etiqueta = Pt(size + 6)
+    rango_eje = ymax_eje - ymin_eje
     for valor in valores_marca:
-        frac = (valor / ymax_eje) if ymax_eje else 0
+        frac = ((valor - ymin_eje) / rango_eje) if rango_eje else 0
         y = baseline - frac * plot_h
         _forma_texto(
-            slide, plot_l - ancho_etiqueta - Pt(4), y - Pt(7), ancho_etiqueta, Pt(14),
-            fmt_num(valor), size=8, color_hex=COL_MUTED, align=PP_ALIGN.RIGHT,
+            slide, plot_l - ancho_etiqueta - Pt(4), y - alto_etiqueta / 2, ancho_etiqueta, alto_etiqueta,
+            fmt_num(valor), size=size, color_hex=COL_MUTED, align=PP_ALIGN.RIGHT,
             anchor=MSO_ANCHOR.MIDDLE, wrap=False)
-        if gridlines and valor > 0:
+        if gridlines and valor > ymin_eje:
             _forma_rect(slide, plot_l, y, plot_w, Pt(0.6), "E5E7EB")
 
 
@@ -454,8 +471,8 @@ def dibujar_grafica_consultas_periodos(slide, box, df, fecha_inicio="2022-08-01"
     ].sort_values("fecha")
 
     # Título (dentro del área del gráfico, arriba del todo)
-    alto_titulo = Pt(20)
-    _forma_texto(slide, L, T, W, alto_titulo, titulo, size=15, color_hex=COL_MUTED,
+    alto_titulo = Pt(24)
+    _forma_texto(slide, L, T, W, alto_titulo, titulo, size=17, color_hex=COL_TEXTO,
                 bold=True, align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.MIDDLE)
 
     if d.empty:
@@ -465,7 +482,8 @@ def dibujar_grafica_consultas_periodos(slide, box, df, fecha_inicio="2022-08-01"
 
     ymax = float(d["consultas_totales"].max())
     ymin = float(d["consultas_totales"].min())
-    ymax_eje = max(ymax * 1.48, 1)
+    ymin_eje = max(ymin * 0.90, 0)
+    ymax_eje = max(ymax * 1.10, ymin_eje + 1)
 
     fecha_fin_banda = (fecha_fin + pd.offsets.MonthBegin(1)).normalize()
     bandas = [
@@ -479,10 +497,10 @@ def dibujar_grafica_consultas_periodos(slide, box, df, fecha_inicio="2022-08-01"
     x0_ord = fecha_inicio.toordinal() - dias_pad
     x1_ord = fecha_fin_banda.toordinal() + dias_pad
 
-    margen_izq = int(W * 0.075)
-    margen_der = int(W * 0.015)
-    margen_sup = alto_titulo + int(H * 0.05)
-    margen_inf = int(H * 0.17)
+    margen_izq = int(W * 0.08)
+    margen_der = int(W * 0.02)
+    margen_sup = alto_titulo + int(H * 0.03)
+    margen_inf = int(H * 0.14)
 
     plot_l = L + margen_izq
     plot_t = T + margen_sup
@@ -498,7 +516,7 @@ def dibujar_grafica_consultas_periodos(slide, box, df, fecha_inicio="2022-08-01"
         return plot_l + frac * plot_w
 
     def ymap(valor):
-        frac = (valor / ymax_eje) if ymax_eje else 0
+        frac = ((valor - ymin_eje) / (ymax_eje - ymin_eje)) if (ymax_eje - ymin_eje) else 0
         return baseline - frac * plot_h
 
     _forma_rect(slide, L, plot_t, W, plot_h, "FFFFFF")
@@ -507,55 +525,81 @@ def dibujar_grafica_consultas_periodos(slide, box, df, fecha_inicio="2022-08-01"
         x_l, x_r = xmap(xmin_b), xmap(xmax_b)
         _forma_rect(slide, x_l, plot_t, x_r - x_l, plot_h, fill)
 
-    _paso_eje, _ = _escala_bonita(ymax, 5)
-    valores_marca_y = [i * _paso_eje for i in range(int(ymax_eje // _paso_eje) + 1)]
+    _paso_eje, _ = _escala_bonita(ymax_eje - ymin_eje, 5)
+    _primer_marca = math.ceil(ymin_eje / _paso_eje) * _paso_eje
+    valores_marca_y = []
+    _v = _primer_marca
+    while _v <= ymax_eje:
+        valores_marca_y.append(_v)
+        _v += _paso_eje
     _dibujar_eje_y(slide, plot_l, plot_w, baseline, plot_h, ymax_eje, valores_marca_y,
-                  ancho_etiqueta=margen_izq - Pt(4), gridlines=True)
-
-    ultimos_3 = d.tail(3)
-    if not ultimos_3.empty:
-        xmin_sub = ultimos_3["fecha"].min() - pd.Timedelta(days=15)
-        xmax_sub = ultimos_3["fecha"].max() + pd.Timedelta(days=15)
-        x_l, x_r = xmap(xmin_sub), xmap(xmax_sub)
-        _forma_rect(slide, x_l, plot_t, x_r - x_l, plot_h, "B22222", transparencia_pct=82)
-        _forma_texto(
-            slide, xmap(d["fecha"].max()) - Pt(70), ymap(ymax * 1.08), Pt(140), Pt(26),
-            "Posible subregistro\ntemporal", size=8.5, color_hex="7A1E3A", bold=True,
-            align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.TOP)
+                  ancho_etiqueta=margen_izq - Pt(4), gridlines=True, size=10, ymin_eje=ymin_eje)
 
     puntos_linea = [(xmap(f), ymap(v)) for f, v in zip(d["fecha"], d["consultas_totales"])]
-    _forma_linea_quebrada(slide, puntos_linea, color_linea, width_pt=1.3)
+    _forma_linea_quebrada(slide, puntos_linea, color_linea, width_pt=1.5)
     for x, y in puntos_linea:
-        _forma_ovalo(slide, x, y, Pt(1.6), color_linea)
+        _forma_ovalo(slide, x, y, Pt(1.8), color_linea)
 
     mes_destacado = fecha_fin.month
     puntos_destacados = d[(d["fecha"].dt.month == mes_destacado) & (d["fecha"].dt.year < 2026)]
     for _, fila in puntos_destacados.iterrows():
-        x, y = xmap(fila["fecha"]), ymap(fila["consultas_totales"])
-        _forma_ovalo(slide, x, y, Pt(4.5), verde_punto)
-        etiqueta = f"{fmt_num(fila['consultas_totales'])}\n{fila['fecha'].strftime('%b-%Y').title()}"
-        _forma_texto(slide, x - Pt(45), y - Pt(38), Pt(90), Pt(30), etiqueta,
-                    size=8, color_hex="000000", bold=True,
-                    align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.BOTTOM)
+        anio = fila["fecha"].year
+        valor = fila["consultas_totales"]
+
+        # Ajuste fino por año para que las etiquetas no se encimen (igual que
+        # el nudge_x/nudge_y de la version en R).
+        if anio == 2023:
+            nudge_y = -ymax * 0.04
+        elif anio == 2024:
+            nudge_y = -ymax * 0.05
+        elif anio == 2025:
+            nudge_y = -ymax * 0.09
+        else:
+            nudge_y = -ymax * 0.05
+        nudge_x_dias = -18 if anio == 2025 else 0
+
+        x_punto, y_punto = xmap(fila["fecha"]), ymap(valor)
+        _forma_ovalo(slide, x_punto, y_punto, Pt(5.5), verde_punto)
+
+        fecha_etiqueta = fila["fecha"] + pd.Timedelta(days=nudge_x_dias)
+        x_etiqueta = xmap(fecha_etiqueta)
+        y_etiqueta = ymap(valor + nudge_y)
+
+        # Linea punteada del punto hacia la etiqueta
+        y_seg_ini = ymap(valor - ymax * 0.02)
+        y_seg_fin = ymap(valor + nudge_y + ymax * 0.015)
+        _forma_linea_punteada(slide, x_punto, y_seg_ini, x_etiqueta, y_seg_fin, "111827", width_pt=0.75)
+
+        etiqueta = f"{fmt_num(valor)}\n{mes_anio_es(fila['fecha'])}"
+        _forma_texto(slide, x_etiqueta - Pt(52), y_etiqueta - Pt(17), Pt(104), Pt(34), etiqueta,
+                    size=10.5, color_hex="000000", bold=True,
+                    align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+
+    # Fila de encabezado (títulos de banda + anotación del decreto) anclada al
+    # techo fijo del área de gráfica, para que nunca choque con el recuadro
+    # del último valor (su altura depende de dónde caiga el último dato).
+    header_y = plot_t + Pt(4)
 
     for xmin_b, xmax_b, _fill, lab in bandas:
         centro = xmap(xmin_b) + (xmap(xmax_b) - xmap(xmin_b)) / 2
-        _forma_texto(slide, centro - Pt(70), ymap(ymax * 1.32), Pt(140), Pt(26), lab,
-                    size=8, color_hex="000000", bold=True,
+        _forma_texto(slide, centro - Pt(80), header_y, Pt(160), Pt(32), lab,
+                    size=11, color_hex="000000", bold=True,
                     align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.TOP)
 
     x_decreto = xmap(pd.Timestamp("2022-08-15"))
-    _forma_flecha_vertical(slide, x_decreto, ymap(ymax * 1.02), ymap(ymin * 0.95), verde_punto)
-    _forma_texto(slide, x_decreto + Pt(6), ymap(ymax * 1.05) - Pt(4), Pt(120), Pt(26),
-                "Decreto de creación\ndel IMSS Bienestar", size=7.5, color_hex="000000",
+    _forma_flecha_vertical(slide, x_decreto, header_y, baseline, verde_punto)
+    _forma_texto(slide, x_decreto + Pt(6), header_y, Pt(130), Pt(30),
+                "Decreto de creación\ndel IMSS Bienestar", size=9.5, color_hex="000000",
                 bold=True, align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP)
 
     fecha_ultimo_valor = d["fecha"].max()
     valor_ultimo = d.loc[d["fecha"] == fecha_ultimo_valor, "consultas_totales"].iloc[0]
     x_vb, y_vb = xmap(fecha_ultimo_valor), ymap(valor_ultimo)
-    vb_w, vb_h = Pt(72), Pt(30)
+    vb_w, vb_h = Pt(88), Pt(36)
+    # No dejar que el recuadro invada la fila de encabezado (banda + decreto).
+    vb_top = max(y_vb - vb_h - Pt(10), header_y + Pt(38))
     vb = slide.shapes.add_shape(
-        MSO_SHAPE.ROUNDED_RECTANGLE, int(x_vb - vb_w / 2), int(y_vb - vb_h - Pt(10)),
+        MSO_SHAPE.ROUNDED_RECTANGLE, int(x_vb - vb_w / 2), int(vb_top),
         int(vb_w), int(vb_h))
     vb.fill.solid()
     vb.fill.fore_color.rgb = _rgb(fill_valuebox)
@@ -565,25 +609,25 @@ def dibujar_grafica_consultas_periodos(slide, box, df, fecha_inicio="2022-08-01"
     tf.word_wrap = True
     tf.vertical_anchor = MSO_ANCHOR.MIDDLE
     tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
-    lineas_valuebox = [fmt_num(valor_ultimo), fecha_ultimo_valor.strftime("%b %Y").title()]
+    lineas_valuebox = [fmt_num(valor_ultimo), mes_anio_es(fecha_ultimo_valor)]
     for i, linea in enumerate(lineas_valuebox):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         p.alignment = PP_ALIGN.CENTER
         r = p.add_run()
         r.text = linea
-        r.font.size = Pt(9.5)
+        r.font.size = Pt(11.5)
         r.font.bold = True
         r.font.color.rgb = _rgb("FFFFFF")
         r.font.name = "Calibri"
 
-    eje_inicio = fecha_inicio.replace(day=1) - pd.DateOffset(months=2)
-    eje_fin = fecha_fin_banda + pd.DateOffset(months=2)
-    for tick in pd.date_range(eje_inicio, eje_fin, freq="2MS"):
+    eje_inicio = fecha_inicio.replace(day=1)
+    eje_fin = fecha_fin_banda
+    for tick in pd.date_range(eje_inicio, eje_fin, freq="MS"):
         x = xmap(tick)
         if x < plot_l - Pt(5) or x > plot_l + plot_w + Pt(5):
             continue
-        etiqueta = f"{MESES_EN_ABBR[tick.month - 1]}-{str(tick.year)[2:]}"
-        _forma_texto(slide, x - Pt(20), baseline + Pt(4), Pt(40), Pt(22), etiqueta,
+        etiqueta = f"{MESES_ES_ABBR[tick.month - 1]}-{str(tick.year)[2:]}"
+        _forma_texto(slide, x - Pt(16), baseline + Pt(4), Pt(32), Pt(22), etiqueta,
                     size=7.5, color_hex=COL_MUTED, bold=False, align=PP_ALIGN.CENTER,
                     anchor=MSO_ANCHOR.TOP, rotation=45, wrap=False)
 
