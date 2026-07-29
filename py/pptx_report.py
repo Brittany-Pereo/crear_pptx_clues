@@ -13,6 +13,7 @@ from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
 
 from py.charts import fecha_larga_es, mes_anio_es
+from py.data_loader import CUBOS_PARQUET, load_categoria_gerencial_nueva
 from py.utils_comunes import calcular_fecha_corte
 
 # ---------------------------------------------------------------------------
@@ -98,6 +99,51 @@ def set_placeholder_text(layout, slide, name: str, text: str):
     else:
         run = p.add_run()
     run.text = str(text)
+
+
+def set_placeholder_lines(layout, slide, name: str, lineas: list[str]):
+    """Como `set_placeholder_text`, pero con varios párrafos — copia el
+    estilo (tamaño, negrita, color, fuente) de la primera línea del
+    placeholder para las líneas nuevas."""
+    ph = find_placeholder(layout, slide, name)
+    if ph is None or not lineas:
+        return
+    tf = ph.text_frame
+    p0 = tf.paragraphs[0]
+
+    estilo = None
+    if p0.runs:
+        r0 = p0.runs[0]
+        color_rgb = None
+        try:
+            if r0.font.color and r0.font.color.type is not None:
+                color_rgb = r0.font.color.rgb
+        except (AttributeError, TypeError):
+            color_rgb = None
+        estilo = (r0.font.size, r0.font.bold, r0.font.name, color_rgb)
+        for extra in list(p0.runs[1:]):
+            extra._r.getparent().remove(extra._r)
+        run0 = r0
+    else:
+        run0 = p0.add_run()
+    run0.text = str(lineas[0])
+
+    for extra_p in list(tf.paragraphs[1:]):
+        extra_p._p.getparent().remove(extra_p._p)
+
+    for linea in lineas[1:]:
+        p = tf.add_paragraph()
+        run = p.add_run()
+        run.text = str(linea)
+        if estilo:
+            size, bold, font_name, color_rgb = estilo
+            if size:
+                run.font.size = size
+            run.font.bold = bold
+            if font_name:
+                run.font.name = font_name
+            if color_rgb:
+                run.font.color.rgb = color_rgb
 
 
 def place_native_chart(slide, layout, name: str, funcion_dibujo, *args, **kwargs):
@@ -692,6 +738,7 @@ def dibujar_card(
     slide, left, top, width, height,
     numero, titulo, var_vs_2025, var_vs_2024,
     acento: str = COL_VERDE, size_num: float = 30, size_titulo: float = 13, size_delta: float = 10.5,
+    lugar_texto: str | None = None, size_lugar: float = 9,
 ):
     card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, left, top, width, height)
     card.fill.solid()
@@ -712,25 +759,31 @@ def dibujar_card(
     barra.line.fill.background()
     barra.shadow.inherit = False
 
-    _card_textbox(slide, left, top, width, height, 0.08, 0.03, 0.36, [(fmt_num(numero), COL_DORADO, True)], size_num)
-    _card_textbox(slide, left, top, width, height, 0.08, 0.36, 0.22, [(str(titulo), COL_TEXTO, True)], size_titulo)
+    _card_textbox(slide, left, top, width, height, 0.08, 0.02, 0.28, [(fmt_num(numero), COL_DORADO, True)], size_num)
+    _card_textbox(slide, left, top, width, height, 0.08, 0.30, 0.16, [(str(titulo), COL_TEXTO, True)], size_titulo)
 
     d25 = fmt_delta(var_vs_2025)
     d24 = fmt_delta(var_vs_2024)
 
     _card_textbox(
-        slide, left, top, width, height, 0.08, 0.60, 0.18,
+        slide, left, top, width, height, 0.08, 0.47, 0.14,
         [(f"{d25['icon']}vs 2025 ", COL_MUTED, False), (d25["label"], d25["col"], True)],
         size_delta,
     )
     _card_textbox(
-        slide, left, top, width, height, 0.08, 0.78, 0.18,
+        slide, left, top, width, height, 0.08, 0.61, 0.14,
         [(f"{d24['icon']}vs 2024 ", COL_MUTED, False), (d24["label"], d24["col"], True)],
         size_delta,
     )
+    if lugar_texto:
+        _card_textbox(
+            slide, left, top, width, height, 0.08, 0.78, 0.18,
+            [(lugar_texto, COL_MUTED, False)],
+            size_lugar,
+        )
 
 
-def _agregar_valuebox(slide, layout, ph_name, df, metrica, titulo):
+def _agregar_valuebox(slide, layout, ph_name, df, metrica, titulo, lugar_texto=None):
     ph = find_placeholder(layout, slide, ph_name)
     if ph is None:
         return
@@ -749,14 +802,86 @@ def _agregar_valuebox(slide, layout, ph_name, df, metrica, titulo):
         slide, left, top, width, height,
         numero=numero, titulo=titulo,
         var_vs_2025=var_2025, var_vs_2024=var_2024,
-        acento=acento,
+        acento=acento, lugar_texto=lugar_texto,
     )
 
 
-def agregar_valueboxes(slide, layout, metricas_vb, datos_consulta_funcion, datos_curps):
+def agregar_valueboxes(slide, layout, metricas_vb, datos_consulta_funcion, datos_curps, rankings=None):
+    rankings = rankings or {}
     for i, metrica in enumerate(metricas_vb, start=1):
-        _agregar_valuebox(slide, layout, f"arriba {i}", datos_consulta_funcion, metrica, MAPA_TITULOS_CONSULTAS[metrica])
+        lugares = rankings.get("lugares", {})
+        lugar_texto = None
+        if metrica in lugares:
+            lugar_texto = f"Lugar {lugares[metrica]} de {rankings['total']} en su categoria"
+        _agregar_valuebox(slide, layout, f"arriba {i}", datos_consulta_funcion, metrica,
+                          MAPA_TITULOS_CONSULTAS[metrica], lugar_texto=lugar_texto)
         _agregar_valuebox(slide, layout, f"abajo {i}", datos_curps, metrica, MAPA_TITULOS_CURP[metrica])
+
+
+# ---------------------------------------------------------------------------
+# Ranking por categoría gerencial
+# ---------------------------------------------------------------------------
+CATEGORIAS_EXCLUIR_RANKING = {
+    "almacenes", "laboratorios", "oficinas administrativas",
+    "otros establecimientos de apoyo", "revisar",
+}
+
+MAPA_METRICA_CUBOS = {
+    "consulta_gral": "consulta_general",
+    "consulta_esp": "consulta_especialidad",
+    "qx": "procedimientos_qx",
+    "egresos": "egresos",
+}
+
+
+def calcular_rankings_categoria(codigo_clues: str, clues_info: pd.DataFrame,
+                                categoria_gerencial_df: pd.DataFrame, cubos_parquet_path: str,
+                                anio: int = 2026) -> dict | None:
+    """Ranking del CLUES dentro de su categoria_gerencial_nueva, por cada tipo
+    de productividad, sobre el acumulado del año en curso. Devuelve None si
+    no aplica (agregados como NACIONAL/entidad, o CLUES sin categoria)."""
+    clues_validas = set(clues_info["clues_imb"].dropna().unique())
+    if codigo_clues not in clues_validas:
+        return None
+
+    cat = categoria_gerencial_df.dropna(subset=["categoria_gerencial_nueva"]).copy()
+    cat = cat[~cat["categoria_gerencial_nueva"].str.strip().str.lower().isin(CATEGORIAS_EXCLUIR_RANKING)]
+
+    fila_categoria = cat.loc[cat["clues_imb"] == codigo_clues, "categoria_gerencial_nueva"]
+    if fila_categoria.empty:
+        return None
+    categoria = fila_categoria.iloc[0]
+
+    cubos = pd.read_parquet(cubos_parquet_path)
+    cubos = cubos[cubos["clues"].isin(clues_validas) & (cubos["anio"].astype(str) == str(anio))]
+    if cubos.empty:
+        return None
+
+    totales = cubos.groupby("clues", as_index=False).agg(
+        consulta_general=("consultas_generales", "sum"),
+        consulta_especialidad=("consultas_de_especialidad", "sum"),
+        procedimientos_qx=("procedimientos_quirurgicos", "sum"),
+        egresos=("egresos", "sum"),
+    )
+
+    pares_categoria = totales.merge(cat, left_on="clues", right_on="clues_imb", how="inner")
+    pares_categoria = pares_categoria[pares_categoria["categoria_gerencial_nueva"] == categoria]
+
+    total_categoria = len(pares_categoria)
+    if total_categoria == 0 or codigo_clues not in pares_categoria["clues"].values:
+        return None
+
+    lugares = {}
+    for metrica_card, col_cubos in MAPA_METRICA_CUBOS.items():
+        rangos = pares_categoria[col_cubos].rank(method="min", ascending=False)
+        fila = rangos[pares_categoria["clues"] == codigo_clues]
+        if not fila.empty:
+            lugares[metrica_card] = int(fila.iloc[0])
+
+    if not lugares:
+        return None
+
+    return {"categoria": categoria, "total": total_categoria, "lugares": lugares}
 
 
 # ---------------------------------------------------------------------------
@@ -922,6 +1047,10 @@ def crear_reporte_productividad(
     prs = Presentation(ruta_master)
     master = prs.slide_masters[0]
 
+    # Ranking por categoría gerencial ---------------------------------------
+    categoria_gerencial_df = load_categoria_gerencial_nueva()
+    ranking = calcular_rankings_categoria(codigo_clues, clues_info, categoria_gerencial_df, str(CUBOS_PARQUET))
+
     # Portada ------------------------------------------------------------
     slide, layout = add_slide(prs, master, "Portada 3")
     nombre_unidad = str(clues_info_filtrado["nombre_de_la_unidad"].iloc[0]).title()
@@ -929,7 +1058,19 @@ def crear_reporte_productividad(
         layout, slide, "Título 1",
         f"Reporte de productividad médica\n{nombre_unidad} ({clues_info_filtrado['clues_imb'].iloc[0]})",
     )
-    set_placeholder_text(layout, slide, "Marcador de contenido 2", fecha_portada)
+
+    lineas_portada = [fecha_portada]
+    if ranking:
+        etiquetas_ranking = [
+            ("consulta_gral", "Consulta general"), ("consulta_esp", "Consulta especialidad"),
+            ("qx", "Procedimientos quirurgicos"), ("egresos", "Egresos"),
+        ]
+        lineas_portada.append(f"Categoria gerencial: {str(ranking['categoria']).title()}")
+        lineas_portada.append(" | ".join(
+            f"{etq}: lugar {ranking['lugares'][clave]} de {ranking['total']}"
+            for clave, etq in etiquetas_ranking if clave in ranking["lugares"]
+        ))
+    set_placeholder_lines(layout, slide, "Marcador de contenido 2", lineas_portada)
 
     # Datos base -----------------------------------------------------------
     cols_metricas = ["consulta_gral", "consulta_esp", "qx", "total_consultas", "egresos"]
@@ -996,7 +1137,7 @@ def crear_reporte_productividad(
     slide, layout = add_slide(prs, master, layout_vb)
     set_placeholder_text(layout, slide, "Título 1", "Productividad IMSS Bienestar")
     set_placeholder_text(layout, slide, "fecha", f"Del 01 de enero al {fecha_portada}")
-    agregar_valueboxes(slide, layout, metricas_vb, datos_consulta_funcion, datos_curps)
+    agregar_valueboxes(slide, layout, metricas_vb, datos_consulta_funcion, datos_curps, rankings=ranking)
 
     # Diapo 3: 2024-2026, solo si hay 2026 ------------------------------------
     if hay_fila_2026:
