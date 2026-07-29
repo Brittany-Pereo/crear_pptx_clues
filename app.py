@@ -17,13 +17,21 @@ from py.data_loader import (
     MASTER_PPTX,
     PERSONAS_PARQUET,
     get_connection,
+    load_categoria_gerencial_nueva,
     load_choices,
     load_clues_info,
     load_metas,
 )
 from py.excel_export import crear_excel
-from py.pptx_report import crear_reporte_productividad
+from py.pptx_report import calcular_rankings_categoria, crear_reporte_productividad
 from py.queries import construir_consulta_clues, construir_consulta_personas, obtener_clues_relacionadas
+
+ETIQUETAS_RANKING = [
+    ("consulta_gral", "Consulta general"),
+    ("consulta_esp", "Consulta especialidad"),
+    ("qx", "Procedimientos quirúrgicos"),
+    ("egresos", "Egresos"),
+]
 
 st.set_page_config(
     page_title="Productividad IMSS Bienestar",
@@ -58,6 +66,13 @@ def cargar_datos_clues(clues_seleccionada: str):
         error = f"No se encontraron datos para las CLUES: {', '.join(clues_rel)}"
 
     return historico, personas, error
+
+
+@st.cache_data(show_spinner=False)
+def cargar_ranking_categoria(clues_seleccionada: str):
+    clues_info = load_clues_info()
+    categoria_gerencial_df = load_categoria_gerencial_nueva()
+    return calcular_rankings_categoria(clues_seleccionada, clues_info, categoria_gerencial_df, str(CUBOS_PARQUET))
 
 
 @st.cache_data(show_spinner="Generando informe en PowerPoint...")
@@ -134,6 +149,27 @@ def render_graficas(dpg: pd.DataFrame, dagp: pd.DataFrame, metas_filtrado: pd.Da
                 st.pyplot(fig)
 
 
+def render_ranking(clues_seleccionada: str):
+    ranking = cargar_ranking_categoria(clues_seleccionada)
+    if not ranking:
+        return
+
+    disponibles = [
+        (etiqueta, ranking["lugares"][clave]) for clave, etiqueta in ETIQUETAS_RANKING if clave in ranking["lugares"]
+    ]
+    if not disponibles:
+        return
+
+    st.caption(
+        f"📊 Categoría gerencial: **{str(ranking['categoria']).title()}** "
+        f"— comparado con {ranking['total']} unidades de la misma categoría"
+    )
+    cols = st.columns(len(disponibles))
+    for col, (etiqueta, lugar) in zip(cols, disponibles):
+        with col:
+            st.metric(etiqueta, f"{lugar}/{ranking['total']}")
+
+
 def render_consulta(clues_info: pd.DataFrame, metas: pd.DataFrame, choices: pd.DataFrame):
     st.header("Consulta de Unidades Médicas")
 
@@ -163,6 +199,8 @@ def render_consulta(clues_info: pd.DataFrame, metas: pd.DataFrame, choices: pd.D
         f"{', '.join(clues_rel)}",
         icon="✅",
     )
+
+    render_ranking(clues_seleccionada)
 
     dpg = datos_personas_grafica(personas)
     dag = datos_anual_grafica(historico)

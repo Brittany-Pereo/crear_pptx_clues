@@ -101,49 +101,56 @@ def set_placeholder_text(layout, slide, name: str, text: str):
     run.text = str(text)
 
 
-def set_placeholder_lines(layout, slide, name: str, lineas: list[str]):
-    """Como `set_placeholder_text`, pero con varios párrafos — copia el
-    estilo (tamaño, negrita, color, fuente) de la primera línea del
-    placeholder para las líneas nuevas."""
+def set_placeholder_lines(layout, slide, name: str, lineas: list):
+    """Como `set_placeholder_text`, pero con varias líneas. Cada línea puede
+    ser un str (texto plano, hereda tamaño/fuente/color de la primera línea
+    del placeholder) o una lista de partes [(texto, negrita, color_hex_o_None), ...]
+    para resaltar un tramo (ej. un número) dentro de la misma línea."""
     ph = find_placeholder(layout, slide, name)
     if ph is None or not lineas:
         return
     tf = ph.text_frame
     p0 = tf.paragraphs[0]
 
-    estilo = None
+    size = font_name = color_base = None
     if p0.runs:
         r0 = p0.runs[0]
-        color_rgb = None
+        size, font_name = r0.font.size, r0.font.name
         try:
             if r0.font.color and r0.font.color.type is not None:
-                color_rgb = r0.font.color.rgb
+                color_base = r0.font.color.rgb
         except (AttributeError, TypeError):
-            color_rgb = None
-        estilo = (r0.font.size, r0.font.bold, r0.font.name, color_rgb)
+            color_base = None
         for extra in list(p0.runs[1:]):
             extra._r.getparent().remove(extra._r)
-        run0 = r0
-    else:
-        run0 = p0.add_run()
-    run0.text = str(lineas[0])
 
     for extra_p in list(tf.paragraphs[1:]):
         extra_p._p.getparent().remove(extra_p._p)
 
-    for linea in lineas[1:]:
-        p = tf.add_paragraph()
-        run = p.add_run()
-        run.text = str(linea)
-        if estilo:
-            size, bold, font_name, color_rgb = estilo
+    def _agregar_partes(paragraph, partes, primer_run=None):
+        for i, (texto, bold, color_hex) in enumerate(partes):
+            run = primer_run if (i == 0 and primer_run is not None) else paragraph.add_run()
+            run.text = texto
             if size:
                 run.font.size = size
-            run.font.bold = bold
             if font_name:
                 run.font.name = font_name
-            if color_rgb:
-                run.font.color.rgb = color_rgb
+            run.font.bold = bold
+            if color_hex:
+                run.font.color.rgb = _rgb(color_hex)
+            elif color_base:
+                run.font.color.rgb = color_base
+            # si no hay color explícito ni base capturada, no se toca: hereda
+            # el color del layout/tema (el placeholder suele empezar vacío,
+            # sin runs de los que copiar estilo).
+
+    for i, linea in enumerate(lineas):
+        partes = [(str(linea), False, None)] if isinstance(linea, str) else linea
+        if i == 0:
+            _agregar_partes(p0, partes, primer_run=(p0.runs[0] if p0.runs else p0.add_run()))
+        else:
+            p = tf.add_paragraph()
+            _agregar_partes(p, partes)
 
 
 def place_native_chart(slide, layout, name: str, funcion_dibujo, *args, **kwargs):
@@ -738,7 +745,7 @@ def dibujar_card(
     slide, left, top, width, height,
     numero, titulo, var_vs_2025, var_vs_2024,
     acento: str = COL_VERDE, size_num: float = 30, size_titulo: float = 13, size_delta: float = 10.5,
-    lugar_texto: str | None = None, size_lugar: float = 9,
+    lugar_partes: list | None = None, size_lugar: float = 9,
 ):
     card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, left, top, width, height)
     card.fill.solid()
@@ -775,15 +782,15 @@ def dibujar_card(
         [(f"{d24['icon']}vs 2024 ", COL_MUTED, False), (d24["label"], d24["col"], True)],
         size_delta,
     )
-    if lugar_texto:
+    if lugar_partes:
         _card_textbox(
             slide, left, top, width, height, 0.08, 0.78, 0.18,
-            [(lugar_texto, COL_MUTED, False)],
+            lugar_partes,
             size_lugar,
         )
 
 
-def _agregar_valuebox(slide, layout, ph_name, df, metrica, titulo, lugar_texto=None):
+def _agregar_valuebox(slide, layout, ph_name, df, metrica, titulo, lugar_partes=None):
     ph = find_placeholder(layout, slide, ph_name)
     if ph is None:
         return
@@ -802,7 +809,7 @@ def _agregar_valuebox(slide, layout, ph_name, df, metrica, titulo, lugar_texto=N
         slide, left, top, width, height,
         numero=numero, titulo=titulo,
         var_vs_2025=var_2025, var_vs_2024=var_2024,
-        acento=acento, lugar_texto=lugar_texto,
+        acento=acento, lugar_partes=lugar_partes,
     )
 
 
@@ -810,11 +817,14 @@ def agregar_valueboxes(slide, layout, metricas_vb, datos_consulta_funcion, datos
     rankings = rankings or {}
     for i, metrica in enumerate(metricas_vb, start=1):
         lugares = rankings.get("lugares", {})
-        lugar_texto = None
+        lugar_partes = None
         if metrica in lugares:
-            lugar_texto = f"Lugar {lugares[metrica]} de {rankings['total']} en su categoria"
+            lugar_partes = [
+                (f"{lugares[metrica]}/{rankings['total']}", COL_DORADO, True),
+                ("  en su categoría", COL_MUTED, False),
+            ]
         _agregar_valuebox(slide, layout, f"arriba {i}", datos_consulta_funcion, metrica,
-                          MAPA_TITULOS_CONSULTAS[metrica], lugar_texto=lugar_texto)
+                          MAPA_TITULOS_CONSULTAS[metrica], lugar_partes=lugar_partes)
         _agregar_valuebox(slide, layout, f"abajo {i}", datos_curps, metrica, MAPA_TITULOS_CURP[metrica])
 
 
@@ -1063,13 +1073,23 @@ def crear_reporte_productividad(
     if ranking:
         etiquetas_ranking = [
             ("consulta_gral", "Consulta general"), ("consulta_esp", "Consulta especialidad"),
-            ("qx", "Procedimientos quirurgicos"), ("egresos", "Egresos"),
+            ("qx", "Procedimientos quirúrgicos"), ("egresos", "Egresos"),
         ]
-        lineas_portada.append(f"Categoria gerencial: {str(ranking['categoria']).title()}")
-        lineas_portada.append(" | ".join(
-            f"{etq}: lugar {ranking['lugares'][clave]} de {ranking['total']}"
-            for clave, etq in etiquetas_ranking if clave in ranking["lugares"]
-        ))
+        lineas_portada.append([
+            ("Categoría gerencial:  ", False, None),
+            (str(ranking["categoria"]).title(), True, None),
+        ])
+
+        partes_ranking = []
+        metricas_disponibles = [
+            (etq, ranking["lugares"][clave]) for clave, etq in etiquetas_ranking if clave in ranking["lugares"]
+        ]
+        for i, (etq, lugar) in enumerate(metricas_disponibles):
+            if i > 0:
+                partes_ranking.append(("     ", False, None))
+            partes_ranking.append((f"{etq}  ", False, None))
+            partes_ranking.append((f"{lugar}/{ranking['total']}", True, COL_DORADO))
+        lineas_portada.append(partes_ranking)
     set_placeholder_lines(layout, slide, "Marcador de contenido 2", lineas_portada)
 
     # Datos base -----------------------------------------------------------
