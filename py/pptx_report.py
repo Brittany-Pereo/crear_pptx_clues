@@ -101,58 +101,6 @@ def set_placeholder_text(layout, slide, name: str, text: str):
     run.text = str(text)
 
 
-def set_placeholder_lines(layout, slide, name: str, lineas: list):
-    """Como `set_placeholder_text`, pero con varias líneas. Cada línea puede
-    ser un str (texto plano, hereda tamaño/fuente/color de la primera línea
-    del placeholder) o una lista de partes [(texto, negrita, color_hex_o_None), ...]
-    para resaltar un tramo (ej. un número) dentro de la misma línea."""
-    ph = find_placeholder(layout, slide, name)
-    if ph is None or not lineas:
-        return
-    tf = ph.text_frame
-    p0 = tf.paragraphs[0]
-
-    size = font_name = color_base = None
-    if p0.runs:
-        r0 = p0.runs[0]
-        size, font_name = r0.font.size, r0.font.name
-        try:
-            if r0.font.color and r0.font.color.type is not None:
-                color_base = r0.font.color.rgb
-        except (AttributeError, TypeError):
-            color_base = None
-        for extra in list(p0.runs[1:]):
-            extra._r.getparent().remove(extra._r)
-
-    for extra_p in list(tf.paragraphs[1:]):
-        extra_p._p.getparent().remove(extra_p._p)
-
-    def _agregar_partes(paragraph, partes, primer_run=None):
-        for i, (texto, bold, color_hex) in enumerate(partes):
-            run = primer_run if (i == 0 and primer_run is not None) else paragraph.add_run()
-            run.text = texto
-            if size:
-                run.font.size = size
-            if font_name:
-                run.font.name = font_name
-            run.font.bold = bold
-            if color_hex:
-                run.font.color.rgb = _rgb(color_hex)
-            elif color_base:
-                run.font.color.rgb = color_base
-            # si no hay color explícito ni base capturada, no se toca: hereda
-            # el color del layout/tema (el placeholder suele empezar vacío,
-            # sin runs de los que copiar estilo).
-
-    for i, linea in enumerate(lineas):
-        partes = [(str(linea), False, None)] if isinstance(linea, str) else linea
-        if i == 0:
-            _agregar_partes(p0, partes, primer_run=(p0.runs[0] if p0.runs else p0.add_run()))
-        else:
-            p = tf.add_paragraph()
-            _agregar_partes(p, partes)
-
-
 def place_native_chart(slide, layout, name: str, funcion_dibujo, *args, **kwargs):
     """Resuelve el placeholder `name` y llama a
     `funcion_dibujo(slide, box, *args, **kwargs)` para dibujar formas nativas
@@ -843,16 +791,36 @@ MAPA_METRICA_CUBOS = {
     "egresos": "egresos",
 }
 
+MAPA_META_COL = {
+    "consulta_gral": "meta_general_anual",
+    "consulta_esp": "meta_especialidad_anual",
+    "qx": "meta_cirugia_anual",
+    "egresos": "meta_egresos_anual",
+}
+
 
 def calcular_rankings_categoria(codigo_clues: str, clues_info: pd.DataFrame,
                                 categoria_gerencial_df: pd.DataFrame, cubos_parquet_path: str,
-                                anio: int = 2026) -> dict | None:
+                                metas: pd.DataFrame | None = None, anio: int = 2026) -> dict | None:
     """Ranking del CLUES dentro de su categoria_gerencial_nueva, por cada tipo
     de productividad, sobre el acumulado del año en curso. Devuelve None si
-    no aplica (agregados como NACIONAL/entidad, o CLUES sin categoria)."""
+    no aplica (agregados como NACIONAL/entidad, o CLUES sin categoria).
+
+    Si se pasa `metas`, solo se rankean los tipos de productividad para los
+    que esta CLUES tiene meta asignada (ej. una unidad móvil que solo tiene
+    meta de consulta general no debe salir rankeada en qx/egresos aunque
+    tenga algo de actividad ahí)."""
     clues_validas = set(clues_info["clues_imb"].dropna().unique())
     if codigo_clues not in clues_validas:
         return None
+
+    metricas_con_meta = None
+    if metas is not None:
+        metas_filtrado = metas[metas["clues_imb"] == codigo_clues]
+        metricas_con_meta = {
+            metrica for metrica, col_meta in MAPA_META_COL.items()
+            if col_meta in metas_filtrado.columns and metas_filtrado[col_meta].fillna(0).sum() > 0
+        }
 
     cat = categoria_gerencial_df.dropna(subset=["categoria_gerencial_nueva"]).copy()
     cat = cat[~cat["categoria_gerencial_nueva"].str.strip().str.lower().isin(CATEGORIAS_EXCLUIR_RANKING)]
@@ -883,6 +851,8 @@ def calcular_rankings_categoria(codigo_clues: str, clues_info: pd.DataFrame,
 
     lugares = {}
     for metrica_card, col_cubos in MAPA_METRICA_CUBOS.items():
+        if metricas_con_meta is not None and metrica_card not in metricas_con_meta:
+            continue
         rangos = pares_categoria[col_cubos].rank(method="min", ascending=False)
         fila = rangos[pares_categoria["clues"] == codigo_clues]
         if not fila.empty:
@@ -1057,9 +1027,12 @@ def crear_reporte_productividad(
     prs = Presentation(ruta_master)
     master = prs.slide_masters[0]
 
-    # Ranking por categoría gerencial ---------------------------------------
+    # Ranking por categoría gerencial (solo se usa en las tarjetas de valor,
+    # no en la portada) -------------------------------------------------
     categoria_gerencial_df = load_categoria_gerencial_nueva()
-    ranking = calcular_rankings_categoria(codigo_clues, clues_info, categoria_gerencial_df, str(CUBOS_PARQUET))
+    ranking = calcular_rankings_categoria(
+        codigo_clues, clues_info, categoria_gerencial_df, str(CUBOS_PARQUET), metas=metas_filtrado,
+    )
 
     # Portada ------------------------------------------------------------
     slide, layout = add_slide(prs, master, "Portada 3")
@@ -1068,29 +1041,7 @@ def crear_reporte_productividad(
         layout, slide, "Título 1",
         f"Reporte de productividad médica\n{nombre_unidad} ({clues_info_filtrado['clues_imb'].iloc[0]})",
     )
-
-    lineas_portada = [fecha_portada]
-    if ranking:
-        etiquetas_ranking = [
-            ("consulta_gral", "Consulta general"), ("consulta_esp", "Consulta especialidad"),
-            ("qx", "Procedimientos quirúrgicos"), ("egresos", "Egresos"),
-        ]
-        lineas_portada.append([
-            ("Categoría gerencial:  ", False, None),
-            (str(ranking["categoria"]).title(), True, None),
-        ])
-
-        partes_ranking = []
-        metricas_disponibles = [
-            (etq, ranking["lugares"][clave]) for clave, etq in etiquetas_ranking if clave in ranking["lugares"]
-        ]
-        for i, (etq, lugar) in enumerate(metricas_disponibles):
-            if i > 0:
-                partes_ranking.append(("     ", False, None))
-            partes_ranking.append((f"{etq}  ", False, None))
-            partes_ranking.append((f"{lugar}/{ranking['total']}", True, COL_DORADO))
-        lineas_portada.append(partes_ranking)
-    set_placeholder_lines(layout, slide, "Marcador de contenido 2", lineas_portada)
+    set_placeholder_text(layout, slide, "Marcador de contenido 2", fecha_portada)
 
     # Datos base -----------------------------------------------------------
     cols_metricas = ["consulta_gral", "consulta_esp", "qx", "total_consultas", "egresos"]

@@ -71,8 +71,12 @@ def cargar_datos_clues(clues_seleccionada: str):
 @st.cache_data(show_spinner=False)
 def cargar_ranking_categoria(clues_seleccionada: str):
     clues_info = load_clues_info()
+    metas = load_metas()
+    metas_filtrado = metas[metas["clues_imb"] == clues_seleccionada]
     categoria_gerencial_df = load_categoria_gerencial_nueva()
-    return calcular_rankings_categoria(clues_seleccionada, clues_info, categoria_gerencial_df, str(CUBOS_PARQUET))
+    return calcular_rankings_categoria(
+        clues_seleccionada, clues_info, categoria_gerencial_df, str(CUBOS_PARQUET), metas=metas_filtrado,
+    )
 
 
 @st.cache_data(show_spinner="Generando informe en PowerPoint...")
@@ -149,6 +153,26 @@ def render_graficas(dpg: pd.DataFrame, dagp: pd.DataFrame, metas_filtrado: pd.Da
                 st.pyplot(fig)
 
 
+def _tarjeta_ranking_html(etiqueta: str, lugar: int, total: int) -> str:
+    return f"""
+    <div style="background:#FFFFFF; border:1px solid #D1D5DB; border-radius:10px;
+                padding:0.9rem 1rem 0.9rem 1.1rem; position:relative; overflow:hidden;
+                min-height:88px;">
+        <div style="position:absolute; left:0; top:6%; width:4px; height:88%;
+                    background:#A57F2C; border-radius:2px;"></div>
+        <div style="font-size:1.7rem; font-weight:800; color:#A57F2C; line-height:1.1;">
+            {lugar}/{total}
+        </div>
+        <div style="font-size:0.85rem; font-weight:700; color:#111827; margin-top:0.15rem;">
+            {etiqueta}
+        </div>
+        <div style="font-size:0.72rem; color:#6B7280; margin-top:0.1rem;">
+            en su categoría gerencial
+        </div>
+    </div>
+    """
+
+
 def render_ranking(clues_seleccionada: str):
     ranking = cargar_ranking_categoria(clues_seleccionada)
     if not ranking:
@@ -167,7 +191,7 @@ def render_ranking(clues_seleccionada: str):
     cols = st.columns(len(disponibles))
     for col, (etiqueta, lugar) in zip(cols, disponibles):
         with col:
-            st.metric(etiqueta, f"{lugar}/{ranking['total']}")
+            st.markdown(_tarjeta_ranking_html(etiqueta, lugar, ranking["total"]), unsafe_allow_html=True)
 
 
 def render_consulta(clues_info: pd.DataFrame, metas: pd.DataFrame, choices: pd.DataFrame):
