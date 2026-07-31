@@ -2,6 +2,7 @@
 
 import io
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
@@ -152,6 +153,9 @@ def render_graficas(dpg: pd.DataFrame, dagp: pd.DataFrame, metas_filtrado: pd.Da
             with cols[i % 2]:
                 st.pyplot(fig)
 
+    for fig in figuras:
+        plt.close(fig)
+
 
 def _tarjeta_ranking_html(etiqueta: str, lugar: int, total: int) -> str:
     return f"""
@@ -160,8 +164,8 @@ def _tarjeta_ranking_html(etiqueta: str, lugar: int, total: int) -> str:
                 min-height:88px;">
         <div style="position:absolute; left:0; top:6%; width:4px; height:88%;
                     background:#A57F2C; border-radius:2px;"></div>
-        <div style="font-size:1.7rem; font-weight:800; color:#A57F2C; line-height:1.1;">
-            {lugar}/{total}
+        <div style="font-size:1.35rem; font-weight:800; color:#A57F2C; line-height:1.15;">
+            Lugar {lugar} de {total}
         </div>
         <div style="font-size:0.85rem; font-weight:700; color:#111827; margin-top:0.15rem;">
             {etiqueta}
